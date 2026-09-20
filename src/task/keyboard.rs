@@ -1,4 +1,4 @@
-use crate::{print, println};
+use crate::print;
 use conquer_once::spin::OnceCell;
 use core::{
     pin::Pin,
@@ -19,13 +19,30 @@ static WAKER: AtomicWaker = AtomicWaker::new();
 /// Must not block or allocate.
 pub(crate) fn add_scancode(scancode: u8) {
     if let Ok(queue) = SCANCODE_QUEUE.try_get() {
-        if let Err(_) = queue.push(scancode) {
-            println!("WARNING: scancode queue full; dropping keyboard input");
-        } else {
-            WAKER.wake();
-        }
+        let _ = queue.push(scancode);
+        WAKER.wake();
+    }
+}
+
+pub fn init() {
+    SCANCODE_QUEUE
+        .try_init_once(|| ArrayQueue::new(2048))
+        .ok();
+}
+
+pub fn pop_scancode() -> Option<u8> {
+    if let Ok(queue) = SCANCODE_QUEUE.try_get() {
+        queue.pop()
     } else {
-        println!("WARNING: scancode queue uninitialized");
+        None
+    }
+}
+
+pub fn has_events() -> bool {
+    if let Ok(queue) = SCANCODE_QUEUE.try_get() {
+        !queue.is_empty()
+    } else {
+        false
     }
 }
 
@@ -35,9 +52,7 @@ pub struct ScancodeStream {
 
 impl ScancodeStream {
     pub fn new() -> Self {
-        SCANCODE_QUEUE
-            .try_init_once(|| ArrayQueue::new(100))
-            .expect("ScancodeStream::new should only be called once");
+        init();
         ScancodeStream { _private: () }
     }
 }

@@ -13,7 +13,10 @@ pub mod fixed_size_block;
 pub mod linked_list;
 
 pub const HEAP_START: usize = 0x_4444_4444_0000;
-pub const HEAP_SIZE: usize = 100 * 1024; // 100 KiB
+pub const DEFAULT_HEAP_SIZE: usize = 8 * 1024 * 1024; // 8 MiB default
+
+pub static CURRENT_HEAP_SIZE: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(DEFAULT_HEAP_SIZE);
 
 #[global_allocator]
 static ALLOCATOR: Locked<FixedSizeBlockAllocator> = Locked::new(FixedSizeBlockAllocator::new());
@@ -22,9 +25,17 @@ pub fn init_heap(
     mapper: &mut impl Mapper<Size4KiB>,
     frame_allocator: &mut impl FrameAllocator<Size4KiB>,
 ) -> Result<(), MapToError<Size4KiB>> {
+    init_heap_with_size(mapper, frame_allocator, DEFAULT_HEAP_SIZE)
+}
+
+pub fn init_heap_with_size(
+    mapper: &mut impl Mapper<Size4KiB>,
+    frame_allocator: &mut impl FrameAllocator<Size4KiB>,
+    heap_size: usize,
+) -> Result<(), MapToError<Size4KiB>> {
     let page_range = {
         let heap_start = VirtAddr::new(HEAP_START as u64);
-        let heap_end = heap_start + HEAP_SIZE as u64 - 1u64;
+        let heap_end = heap_start + heap_size as u64 - 1u64;
         let heap_start_page = Page::containing_address(heap_start);
         let heap_end_page = Page::containing_address(heap_end);
         Page::range_inclusive(heap_start_page, heap_end_page)
@@ -39,10 +50,17 @@ pub fn init_heap(
     }
 
     unsafe {
-        ALLOCATOR.lock().init(HEAP_START, HEAP_SIZE);
+        ALLOCATOR.lock().init(HEAP_START, heap_size);
     }
 
+    CURRENT_HEAP_SIZE.store(heap_size, core::sync::atomic::Ordering::Relaxed);
+
     Ok(())
+}
+
+pub fn heap_stats() -> (usize, usize) {
+    let alloc = ALLOCATOR.lock();
+    (alloc.used(), alloc.size())
 }
 
 pub struct Dummy;
@@ -69,7 +87,7 @@ impl<A> Locked<A> {
         }
     }
 
-    pub fn lock(&self) -> spin::MutexGuard<A> {
+    pub fn lock(&self) -> spin::MutexGuard<'_, A> {
         self.inner.lock()
     }
 }

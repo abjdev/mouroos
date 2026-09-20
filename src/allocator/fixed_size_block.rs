@@ -56,6 +56,14 @@ impl FixedSizeBlockAllocator {
             Err(_) => ptr::null_mut(),
         }
     }
+
+    pub fn used(&self) -> usize {
+        self.fallback_allocator.used()
+    }
+
+    pub fn size(&self) -> usize {
+        self.fallback_allocator.size()
+    }
 }
 
 unsafe impl GlobalAlloc for Locked<FixedSizeBlockAllocator> {

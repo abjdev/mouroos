@@ -1,12 +1,12 @@
 # Blog OS (Async/Await)
 
-[![Build Status](https://github.com/phil-opp/blog_os/workflows/Code/badge.svg?branch=post-12)](https://github.com/phil-opp/blog_os/actions?query=workflow%3A%22Code%22+branch%3Apost-12)
+[![Build Status](https://github.com/phil-opp/mouros/workflows/Code/badge.svg?branch=post-12)](https://github.com/phil-opp/mouros/actions?query=workflow%3A%22Code%22+branch%3Apost-12)
 
 This repository contains the source code for the [Async/Await][post] post of the [Writing an OS in Rust](https://os.phil-opp.com) series.
 
 [post]: https://os.phil-opp.com/async-await/
 
-**Check out the [master branch](https://github.com/phil-opp/blog_os) for more information.**
+**Check out the [master branch](https://github.com/phil-opp/mouros) for more information.**
 
 ## Building
 
@@ -32,7 +32,7 @@ After installing, you can create the bootable disk image by running:
 cargo bootimage
 ```
 
-This creates a bootable disk image in the `target/x86_64-blog_os/debug` directory.
+This creates a bootable disk image in the `target/x86_64-mouros/debug` directory.
 
 Please file an issue if you have any problems.
 
@@ -51,7 +51,7 @@ cargo run
 You can also write the image to an USB stick for booting it on a real machine. On Linux, the command for this is:
 
 ```
-dd if=target/x86_64-blog_os/debug/bootimage-blog_os.bin of=/dev/sdX && sync
+dd if=target/x86_64-mouros/debug/bootimage-mouros.bin of=/dev/sdX && sync
 ```
 
 Where `sdX` is the device name of your USB stick. **Be careful** to choose the correct device name, because everything on that device is overwritten.

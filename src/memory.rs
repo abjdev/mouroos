@@ -47,40 +47,120 @@ unsafe impl FrameAllocator<Size4KiB> for EmptyFrameAllocator {
 /// A FrameAllocator that returns usable frames from the bootloader's memory map.
 pub struct BootInfoFrameAllocator {
     memory_map: &'static MemoryMap,
-    next: usize,
+    current_region_idx: usize,
+    current_addr: u64,
 }
 
 impl BootInfoFrameAllocator {
     /// Create a FrameAllocator from the passed memory map.
-    ///
-    /// This function is unsafe because the caller must guarantee that the passed
-    /// memory map is valid. The main requirement is that all frames that are marked
-    /// as `USABLE` in it are really unused.
     pub unsafe fn init(memory_map: &'static MemoryMap) -> Self {
-        BootInfoFrameAllocator {
+        let mut allocator = BootInfoFrameAllocator {
             memory_map,
-            next: 0,
-        }
+            current_region_idx: 0,
+            current_addr: 0,
+        };
+        allocator.advance_to_next_usable();
+        allocator
     }
 
-    /// Returns an iterator over the usable frames specified in the memory map.
-    fn usable_frames(&self) -> impl Iterator<Item = PhysFrame> {
-        // get usable regions from memory map
-        let regions = self.memory_map.iter();
-        let usable_regions = regions.filter(|r| r.region_type == MemoryRegionType::Usable);
-        // map each region to its address range
-        let addr_ranges = usable_regions.map(|r| r.range.start_addr()..r.range.end_addr());
-        // transform to an iterator of frame start addresses
-        let frame_addresses = addr_ranges.flat_map(|r| r.step_by(4096));
-        // create `PhysFrame` types from the start addresses
-        frame_addresses.map(|addr| PhysFrame::containing_address(PhysAddr::new(addr)))
+    fn advance_to_next_usable(&mut self) {
+        while self.current_region_idx < self.memory_map.len() {
+            let region = &self.memory_map[self.current_region_idx];
+            if region.region_type == MemoryRegionType::Usable && region.range.start_addr() < region.range.end_addr() {
+                self.current_addr = region.range.start_addr();
+                return;
+            }
+            self.current_region_idx += 1;
+        }
     }
 }
 
 unsafe impl FrameAllocator<Size4KiB> for BootInfoFrameAllocator {
     fn allocate_frame(&mut self) -> Option<PhysFrame> {
-        let frame = self.usable_frames().nth(self.next);
-        self.next += 1;
-        frame
+        while self.current_region_idx < self.memory_map.len() {
+            let region = &self.memory_map[self.current_region_idx];
+            if region.region_type == MemoryRegionType::Usable && self.current_addr + 4096 <= region.range.end_addr() {
+                let frame = PhysFrame::containing_address(PhysAddr::new(self.current_addr));
+                self.current_addr += 4096;
+                return Some(frame);
+            }
+            self.current_region_idx += 1;
+            self.advance_to_next_usable();
+        }
+        None
     }
+}
+
+/// Maps a contiguous range of physical memory to a contiguous virtual memory range.
+pub unsafe fn map_physical_range(
+    mapper: &mut impl x86_64::structures::paging::Mapper<Size4KiB>,
+    frame_allocator: &mut impl FrameAllocator<Size4KiB>,
+    phys_start: PhysAddr,
+    virt_start: VirtAddr,
+    size: usize,
+    flags: x86_64::structures::paging::PageTableFlags,
+) -> Result<(), x86_64::structures::paging::mapper::MapToError<Size4KiB>> {
+    use x86_64::structures::paging::Page;
+
+    if size == 0 {
+        return Ok(());
+    }
+
+    let page_start = Page::<Size4KiB>::containing_address(virt_start);
+    let page_end = Page::<Size4KiB>::containing_address(virt_start + (size as u64) - 1u64);
+    let mut phys = phys_start;
+
+    for page in Page::range_inclusive(page_start, page_end) {
+        let frame = PhysFrame::containing_address(phys);
+        unsafe {
+            mapper.map_to(page, frame, flags, frame_allocator)?.flush();
+        }
+        phys += 4096u64;
+    }
+
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SystemMemoryInfo {
+    pub total_ram_bytes: u64,
+    pub usable_ram_bytes: u64,
+}
+
+pub static SYSTEM_MEMORY_INFO: spin::Mutex<SystemMemoryInfo> = spin::Mutex::new(SystemMemoryInfo {
+    total_ram_bytes: 8 * 1024 * 1024,
+    usable_ram_bytes: 8 * 1024 * 1024,
+});
+
+pub fn get_system_memory_info() -> SystemMemoryInfo {
+    *SYSTEM_MEMORY_INFO.lock()
+}
+
+pub fn init_memory_stats(memory_map: &'static MemoryMap) -> SystemMemoryInfo {
+    let mut max_ram_below_4g: u64 = 0;
+    let mut above_4g_bytes: u64 = 0;
+    let mut usable_bytes: u64 = 0;
+
+    for r in memory_map.iter() {
+        let size = r.range.end_addr().saturating_sub(r.range.start_addr());
+        if r.region_type == MemoryRegionType::Usable {
+            usable_bytes += size;
+        }
+
+        if r.range.end_addr() <= 0xF000_0000 {
+            if r.range.end_addr() > max_ram_below_4g {
+                max_ram_below_4g = r.range.end_addr();
+            }
+        } else if r.range.start_addr() >= 0x1_0000_0000 && r.region_type != MemoryRegionType::Reserved {
+            above_4g_bytes += size;
+        }
+    }
+
+    let total_ram_bytes = max_ram_below_4g + above_4g_bytes;
+    let info = SystemMemoryInfo {
+        total_ram_bytes,
+        usable_ram_bytes: usable_bytes,
+    };
+    *SYSTEM_MEMORY_INFO.lock() = info;
+    info
 }

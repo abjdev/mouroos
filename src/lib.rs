@@ -9,9 +9,13 @@ extern crate alloc;
 use core::panic::PanicInfo;
 
 pub mod allocator;
+pub mod drivers;
+pub mod elf;
 pub mod gdt;
+pub mod gui;
 pub mod interrupts;
 pub mod memory;
+pub mod mp3;
 pub mod serial;
 pub mod task;
 pub mod vga_buffer;
@@ -19,7 +23,14 @@ pub mod vga_buffer;
 pub fn init() {
     gdt::init();
     interrupts::init_idt();
-    unsafe { interrupts::PICS.lock().initialize() };
+    unsafe {
+        let mut pics = interrupts::PICS.lock();
+        pics.initialize();
+        // Unmask IRQ0 (Timer), IRQ1 (Keyboard), IRQ2 (Cascade) on master,
+        // and IRQ12 (PS/2 Mouse) on slave PIC
+        pics.write_masks(0xF8, 0xEF);
+    };
+    interrupts::init_pit(100);
     x86_64::instructions::interrupts::enable();
 }
 pub trait Testable {

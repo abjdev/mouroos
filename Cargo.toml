@@ -1,7 +1,7 @@
 [package]
-name = "blog_os"
+name = "mouros"
 version = "0.1.0"
-authors = ["Philipp Oppermann <dev@phil-opp.com>"]
+authors = ["Atahan Bahadir"]
 edition = "2024"
 
 [[test]]
@@ -13,7 +13,7 @@ name = "stack_overflow"
 harness = false
 
 [dependencies]
-bootloader = { version = "0.9", features = ["map_physical_memory"] }
+bootloader = { path = "bootloader", features = ["map_physical_memory"] }
 volatile = "0.2.6"
 spin = "0.5.2"
 x86_64 = "0.15.5"
@@ -21,13 +21,18 @@ uart_16550 = "0.6.0"
 pic8259 = "0.11.0"
 pc-keyboard = "0.7.0"
 linked_list_allocator = "0.9.0"
+nanomp3 = "0.1.1"
+neurodoom = { version = "0.6.7", default-features = false }
+
+[profile.dev.package."*"]
+opt-level = 2
 
 [dependencies.lazy_static]
 version = "1.0"
 features = ["spin_no_std"]
 
 [[bin]]
-name = "blog_os"
+name = "mouros"
 test = true
 bench = false
 
