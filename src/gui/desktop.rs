@@ -779,9 +779,12 @@ pub async fn run_desktop(mut desktop: Desktop) {
         // 3. Tick animations & game state periodically based on hardware PIT timer
         let current_tick = crate::interrupts::TICKS.load(core::sync::atomic::Ordering::Relaxed);
         if current_tick != last_tick {
+            let elapsed = (current_tick - last_tick).min(10);
             last_tick = current_tick;
-            if desktop.on_tick() {
-                full_render = true;
+            for _ in 0..elapsed {
+                if desktop.on_tick() {
+                    full_render = true;
+                }
             }
         }
 

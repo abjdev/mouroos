@@ -131,7 +131,19 @@ impl MusicApp {
 
     pub fn play(&mut self) {
         match self.mode {
-            PlayerMode::Mp3 => self.mp3_player.play(),
+            PlayerMode::Mp3 => {
+                self.mp3_player.play();
+                if crate::drivers::ac97::is_available() {
+                    let mut prebuffered = 0;
+                    while self.mp3_player.is_playing && crate::drivers::ac97::can_write() && prebuffered < 12 {
+                        if self.mp3_player.step_frame() {
+                            prebuffered += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
             PlayerMode::Chiptune => self.chiptune_is_playing = true,
         }
     }
@@ -213,13 +225,18 @@ impl Application for MusicApp {
             PlayerMode::Mp3 => {
                 let mut changed = false;
                 if crate::drivers::ac97::is_available() {
-                    // Keep AC97 DMA ring buffer topped up (stream up to 4 frames per tick to quickly prebuffer ~100ms)
+                    // Keep AC97 DMA ring buffer topped up (stream up to 8 frames per tick to prebuffer ~200-300ms)
                     let mut frames_decoded = 0;
-                    while self.mp3_player.is_playing && crate::drivers::ac97::can_write() && frames_decoded < 4 {
+                    while self.mp3_player.is_playing && crate::drivers::ac97::can_write() && frames_decoded < 8 {
                         if self.mp3_player.step_frame() {
-                            changed = true;
+                            frames_decoded += 1;
+                        } else {
+                            break;
                         }
-                        frames_decoded += 1;
+                    }
+                    // Throttle spectrum visualizer GUI redraw to ~33 FPS (every 3 ticks) to preserve CPU bandwidth
+                    if frames_decoded > 0 && self.anim_phase % 3 == 0 {
+                        changed = true;
                     }
                 } else {
                     // Fallback to PIT timer accumulator for systems without AC97 (PC speaker)
@@ -445,16 +462,17 @@ impl Application for MusicApp {
                     nanomp3::Channels::Mono => "Mono",
                 };
                 let info_txt = format!(
-                    "[MP3] {}.{}k | {}k | {}",
+                    "{}k/{}k {}",
                     track.info.sample_rate / 1000,
-                    (track.info.sample_rate % 1000) / 100,
                     track.info.bitrate_kbps,
                     chan_str
                 );
                 fb.draw_string(bx + 12, info_y, &info_txt, Color::from_rgb(45, 212, 191));
                 if self.mp3_player.dominant_freq > 0 {
                     let pitch_txt = format!("Pitch: {} Hz", self.mp3_player.dominant_freq);
-                    fb.draw_string(bx + bw as isize - 110, info_y, &pitch_txt, Color::from_rgb(251, 191, 36));
+                    let pw = pitch_txt.len() * FONT_WIDTH;
+                    let px = bx + bw as isize - 10 - pw as isize;
+                    fb.draw_string(px, info_y, &pitch_txt, Color::from_rgb(251, 191, 36));
                 }
             }
             PlayerMode::Chiptune => {
@@ -462,7 +480,9 @@ impl Application for MusicApp {
                 let cur_f = speaker::get_current_frequency();
                 if cur_f > 0 {
                     let pitch_txt = format!("{} Hz", cur_f);
-                    fb.draw_string(bx + bw as isize - 80, info_y, &pitch_txt, Color::from_rgb(180, 0, 0));
+                    let pw = pitch_txt.len() * FONT_WIDTH;
+                    let px = bx + bw as isize - 10 - pw as isize;
+                    fb.draw_string(px, info_y, &pitch_txt, Color::from_rgb(180, 0, 0));
                 }
             }
         }
@@ -475,15 +495,21 @@ impl Application for MusicApp {
         fb.draw_bevel_sunken(bx + 8, viz_y, viz_w, viz_h);
 
         let num_bars = 16;
-        let bar_w = ((viz_w.saturating_sub(20)) / num_bars).max(6) as isize;
+        let gap = 2isize;
+        // Total usable width inside the sunken bevel (leaving 4px margin on each side)
+        let usable_w = viz_w.saturating_sub(8 + (num_bars - 1) * gap as usize);
+        let bar_w = (usable_w / num_bars).max(4) as isize;
+        let total_viz_w = num_bars as isize * bar_w + (num_bars as isize - 1) * gap;
+        let start_x = bx + 8 + ((viz_w as isize - total_viz_w) / 2).max(4);
+
         for i in 0..num_bars {
-            let bar_x = bx + 14 + i as isize * (bar_w + 3);
+            let bar_x = start_x + i as isize * (bar_w + gap);
             let raw_h = match self.mode {
                 PlayerMode::Mp3 => self.mp3_player.viz_heights[i],
                 PlayerMode::Chiptune => self.chiptune_viz_heights[i],
             };
-            let h = (raw_h.min(32) as usize).max(2);
-            let bar_top = viz_y + (viz_h as isize - h as isize - 3);
+            let h = (raw_h.min(30) as usize).max(2);
+            let bar_top = viz_y + (viz_h as isize - h as isize - 4);
 
             let bar_color = if i < 5 {
                 Color::from_rgb(34, 197, 94) // Retro Green
@@ -574,7 +600,9 @@ impl Application for MusicApp {
                         t.info.duration_seconds / 60,
                         t.info.duration_seconds % 60
                     );
-                    fb.draw_string(bx + 14, row_y + 1, &row_txt, name_col);
+                    let max_chars = (box_w.saturating_sub(16) / FONT_WIDTH).max(1);
+                    let disp_txt = if row_txt.len() > max_chars { &row_txt[..max_chars] } else { &row_txt };
+                    fb.draw_string(bx + 14, row_y + 1, disp_txt, name_col);
                 }
             }
             PlayerMode::Chiptune => {
@@ -587,7 +615,9 @@ impl Application for MusicApp {
                     }
                     let name_col = if is_cur { Color::WHITE } else { Color::BLACK };
                     let row_txt = format!("{}. {}", i + 1, t.title);
-                    fb.draw_string(bx + 14, row_y + 1, &row_txt, name_col);
+                    let max_chars = (box_w.saturating_sub(16) / FONT_WIDTH).max(1);
+                    let disp_txt = if row_txt.len() > max_chars { &row_txt[..max_chars] } else { &row_txt };
+                    fb.draw_string(bx + 14, row_y + 1, disp_txt, name_col);
                 }
             }
         }

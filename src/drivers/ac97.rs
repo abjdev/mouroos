@@ -210,7 +210,7 @@ pub fn can_write() -> bool {
     if let Some(ref dev) = *AC97_INSTANCE.lock() {
         let civ = unsafe { Port::<u8>::new(dev.nabmbar + 0x14).read() as usize & 0x1F };
         let in_flight = (dev.next_desc + BDL_ENTRIES - civ) % BDL_ENTRIES;
-        in_flight < 24
+        in_flight <= 26
     } else {
         false
     }
@@ -223,16 +223,18 @@ pub fn write_pcm_samples(mut samples: &[i16]) -> usize {
         None => return 0,
     };
 
+    let civ = unsafe { Port::<u8>::new(dev.nabmbar + 0x14).read() as usize & 0x1F };
+    let in_flight = (dev.next_desc + BDL_ENTRIES - civ) % BDL_ENTRIES;
+    let needed = (samples.len() + SAMPLES_PER_BD - 1) / SAMPLES_PER_BD;
+    if in_flight + needed >= 31 {
+        // Not enough room to write entire frame; avoid splitting/dropping half-frames
+        return 0;
+    }
+
     let mut total_written = 0;
     let mut last_written = None;
 
     while !samples.is_empty() {
-        let civ = unsafe { Port::<u8>::new(dev.nabmbar + 0x14).read() as usize & 0x1F };
-        let in_flight = (dev.next_desc + BDL_ENTRIES - civ) % BDL_ENTRIES;
-        if in_flight >= 26 {
-            break;
-        }
-
         let count = samples.len().min(SAMPLES_PER_BD);
         let desc_idx = dev.next_desc;
         unsafe {
@@ -268,9 +270,9 @@ pub fn write_pcm_samples(mut samples: &[i16]) -> usize {
                 }
             } else if sr & 0x01 != 0 {
                 // DMA was running but halted due to underrun (SR_DCH).
-                // Writing PO_LVI above already woke QEMU because CR_RPBM is 1.
-                // Clear the status bits to reset error/completion flags.
+                // Clear status bits and re-assert RPBM run to resume audio immediately
                 Port::<u16>::new(dev.nabmbar + 0x16).write(sr & 0x1E);
+                Port::<u8>::new(dev.nabmbar + 0x1B).write(0x01);
             }
         }
     }
