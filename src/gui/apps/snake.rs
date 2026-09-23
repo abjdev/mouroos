@@ -108,21 +108,22 @@ impl Application for SnakeApp {
         client_w: usize,
         client_h: usize,
     ) {
-        // Arena background
-        fb.fill_rect(client_x, client_y, client_w, client_h, Color::from_rgb(15, 23, 42));
+        // Windows 98 Classic Gray casing
+        fb.fill_rect(client_x, client_y, client_w, client_h, Color::RETRO_FACE);
 
         let offset_x = client_x + 16;
         let offset_y = client_y + 36;
         let arena_w = (GRID_WIDTH as usize) * CELL_SIZE;
         let arena_h = (GRID_HEIGHT as usize) * CELL_SIZE;
 
-        // Top HUD Header
-        let score_str = format!("SCORE: {:04}  HIGH: {:04}", self.score, self.high_score);
-        fb.draw_string(client_x + 16, client_y + 12, &score_str, Color::from_rgb(251, 191, 36));
+        // Top HUD Header (Sunken 3D Panel)
+        fb.draw_sunken_panel(client_x + 16, client_y + 8, arena_w, 20);
+        let score_str = format!("SCORE: {:04}    HIGH: {:04}", self.score, self.high_score);
+        fb.draw_string(client_x + 24, client_y + 12, &score_str, Color::BLACK);
 
-        // Arena Border
-        fb.fill_rect(offset_x - 2, offset_y - 2, arena_w + 4, arena_h + 4, Color::from_rgb(51, 65, 85));
-        fb.fill_rect(offset_x, offset_y, arena_w, arena_h, Color::from_rgb(11, 15, 25));
+        // Arena 3D Sunken Border
+        fb.fill_rect(offset_x, offset_y, arena_w, arena_h, Color::BLACK);
+        fb.draw_bevel_sunken(offset_x - 2, offset_y - 2, arena_w + 4, arena_h + 4);
 
         // Draw Food (Apple)
         let food_x = offset_x + (self.food.0 as isize * CELL_SIZE as isize);

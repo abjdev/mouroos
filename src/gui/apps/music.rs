@@ -380,20 +380,16 @@ impl Application for MusicApp {
         bw: usize,
         bh: usize,
     ) {
-        // Dark modern audio player background
-        fb.draw_gradient_v(
-            bx,
-            by,
-            bw,
-            bh,
-            Color::from_rgb(15, 23, 42),
-            Color::from_rgb(24, 24, 37),
-        );
+        // Windows 98 Classic Gray casing
+        fb.fill_rect(bx, by, bw, bh, Color::RETRO_FACE);
 
-        // 1. Album / Track Header Card
-        let card_h = 42;
-        fb.fill_rect(bx + 10, by + 6, bw - 20, card_h, Color::from_rgb(30, 41, 59));
-        fb.draw_rect(bx + 10, by + 6, bw - 20, card_h, Color::from_rgb(51, 65, 85));
+        // 1. Retro Sunken LCD Status Box
+        let card_h = 38;
+        let card_x = bx + 8;
+        let card_y = by + 6;
+        let card_w = bw.saturating_sub(16);
+        fb.fill_rect(card_x, card_y, card_w, card_h, Color::BLACK);
+        fb.draw_bevel_sunken(card_x, card_y, card_w, card_h);
 
         let (title_str, artist_str) = match self.mode {
             PlayerMode::Mp3 => {
@@ -413,12 +409,15 @@ impl Application for MusicApp {
         };
 
         // Truncate long title/artist to fit inside card
-        let max_chars = (bw.saturating_sub(130) / FONT_WIDTH).max(10);
+        let max_chars = (card_w.saturating_sub(110) / FONT_WIDTH).max(8);
         let disp_title = if title_str.len() > max_chars { &title_str[..max_chars] } else { &title_str };
         let disp_artist = if artist_str.len() > max_chars { &artist_str[..max_chars] } else { &artist_str };
 
-        fb.draw_string(bx + 18, by + 12, disp_title, Color::from_rgb(56, 189, 248));
-        fb.draw_string(bx + 18, by + 28, disp_artist, Color::from_rgb(148, 163, 184));
+        // Retro green LCD text
+        let lcd_green = Color::from_rgb(52, 211, 153);
+        let lcd_amber = Color::from_rgb(251, 191, 36);
+        fb.draw_string(card_x + 8, card_y + 6, disp_title, lcd_green);
+        fb.draw_string(card_x + 8, card_y + 20, disp_artist, Color::from_rgb(148, 163, 184));
 
         let state_str = if speaker::is_muted() {
             "[MUTED]"
@@ -430,11 +429,11 @@ impl Application for MusicApp {
         let state_col = if speaker::is_muted() {
             Color::from_rgb(239, 68, 68)
         } else if self.is_playing() {
-            Color::from_rgb(34, 197, 94)
+            lcd_green
         } else {
-            Color::from_rgb(245, 158, 11)
+            lcd_amber
         };
-        fb.draw_string(bx + bw as isize - 88, by + 12, state_str, state_col);
+        fb.draw_string(card_x + card_w as isize - 76, card_y + 6, state_str, state_col);
 
         // 2. Stream Information line
         let info_y = by + 52;
@@ -459,38 +458,39 @@ impl Application for MusicApp {
                 }
             }
             PlayerMode::Chiptune => {
-                fb.draw_string(bx + 12, info_y, "[8-BIT] PIT Ch2 Synthesizer", Color::from_rgb(45, 212, 191));
+                fb.draw_string(bx + 10, info_y, "[8-BIT] PIT Ch2 Synthesizer", Color::BLACK);
                 let cur_f = speaker::get_current_frequency();
                 if cur_f > 0 {
-                    let pitch_txt = format!("Pitch: {} Hz", cur_f);
-                    fb.draw_string(bx + bw as isize - 110, info_y, &pitch_txt, Color::from_rgb(251, 191, 36));
+                    let pitch_txt = format!("{} Hz", cur_f);
+                    fb.draw_string(bx + bw as isize - 80, info_y, &pitch_txt, Color::from_rgb(180, 0, 0));
                 }
             }
         }
 
-        // 3. Dynamic Audio Visualizer (16 Frequency Spectrum Bars)
-        let viz_y = by + 68;
-        let viz_h = 44;
-        fb.fill_rect(bx + 10, viz_y, bw - 20, viz_h, Color::from_rgb(10, 15, 29));
-        fb.draw_rect(bx + 10, viz_y, bw - 20, viz_h, Color::from_rgb(30, 41, 59));
+        // 3. Dynamic Audio Visualizer (16 Frequency Spectrum Bars in Sunken Box)
+        let viz_y = by + 62;
+        let viz_h = 38;
+        let viz_w = bw.saturating_sub(16);
+        fb.fill_rect(bx + 8, viz_y, viz_w, viz_h, Color::BLACK);
+        fb.draw_bevel_sunken(bx + 8, viz_y, viz_w, viz_h);
 
         let num_bars = 16;
-        let bar_w = ((bw - 40) / num_bars).max(6) as isize;
+        let bar_w = ((viz_w.saturating_sub(20)) / num_bars).max(6) as isize;
         for i in 0..num_bars {
-            let bar_x = bx + 16 + i as isize * (bar_w + 3);
+            let bar_x = bx + 14 + i as isize * (bar_w + 3);
             let raw_h = match self.mode {
                 PlayerMode::Mp3 => self.mp3_player.viz_heights[i],
                 PlayerMode::Chiptune => self.chiptune_viz_heights[i],
             };
-            let h = raw_h.min(38) as usize;
+            let h = (raw_h.min(32) as usize).max(2);
             let bar_top = viz_y + (viz_h as isize - h as isize - 3);
 
             let bar_color = if i < 5 {
-                Color::from_rgb(56, 189, 248) // Bass / Cyan
+                Color::from_rgb(34, 197, 94) // Retro Green
             } else if i < 11 {
-                Color::from_rgb(168, 85, 247) // Mids / Purple
+                Color::from_rgb(234, 179, 8) // Retro Yellow
             } else {
-                Color::from_rgb(244, 63, 94) // Highs / Rose
+                Color::from_rgb(239, 68, 68) // Retro Red Peak
             };
 
             fb.fill_rect(bar_x, bar_top, bar_w as usize, h, bar_color);
@@ -498,16 +498,16 @@ impl Application for MusicApp {
             fb.fill_rect(bar_x, bar_top, bar_w as usize, 1, Color::WHITE);
         }
 
-        // 4. Track Progress Bar & Time
-        let bar_y = by + 118;
-        fb.fill_rect(bx + 10, bar_y, bw - 20, 6, Color::from_rgb(30, 41, 59));
-        fb.draw_rect(bx + 10, bar_y, bw - 20, 6, Color::from_rgb(51, 65, 85));
+        // 4. Track Progress Bar & Time (Sunken Groove)
+        let bar_y = by + 106;
+        fb.fill_rect(bx + 8, bar_y, bw - 16, 6, Color::WHITE);
+        fb.draw_sunken_panel(bx + 8, bar_y, bw - 16, 6);
 
         let (progress_w, time_str) = match self.mode {
             PlayerMode::Mp3 => {
                 let track = &self.mp3_player.tracks[self.mp3_player.current_track];
                 let total = track.info.total_frames.max(1);
-                let pw = ((bw - 20) * self.mp3_player.current_frame) / total;
+                let pw = ((bw - 16) * self.mp3_player.current_frame) / total;
                 let cur_s = if track.info.sample_rate > 0 {
                     (self.mp3_player.current_frame as u64 * 1152 / track.info.sample_rate as u64) as u32
                 } else {
@@ -520,91 +520,84 @@ impl Application for MusicApp {
             PlayerMode::Chiptune => {
                 let current = &self.chiptune_tracks[self.chiptune_track];
                 let total = current.notes.len().max(1);
-                let pw = ((bw - 20) * self.note_idx) / total;
+                let pw = ((bw - 16) * self.note_idx) / total;
                 let t_txt = format!("Note {}/{}", self.note_idx, total);
                 (pw, t_txt)
             }
         };
 
         if progress_w > 0 {
-            fb.draw_gradient_v(
-                bx + 10,
-                bar_y,
-                progress_w,
-                6,
-                Color::from_rgb(56, 189, 248),
-                Color::from_rgb(14, 165, 233),
-            );
+            fb.fill_rect(bx + 8, bar_y, progress_w, 6, Color::RETRO_SELECTION);
         }
-        fb.draw_string(bx + bw as isize - 90, by + 126, &time_str, Color::from_rgb(148, 163, 184));
+        fb.draw_string(bx + bw as isize - 90, by + 114, &time_str, Color::BLACK);
 
-        // 5. Playback Controls
-        let btn_y = by + 138;
-        let play_txt = if self.is_playing() { "PAUSE" } else { "PLAY" };
-        draw_button(fb, bx + 14, btn_y, 44, 22, play_txt, Color::from_rgb(34, 197, 94));
-        draw_button(fb, bx + 62, btn_y, 42, 22, "STOP", Color::from_rgb(239, 68, 68));
-        draw_button(fb, bx + 108, btn_y, 42, 22, "PREV", Color::from_rgb(71, 85, 105));
-        draw_button(fb, bx + 154, btn_y, 42, 22, "NEXT", Color::from_rgb(71, 85, 105));
-        let mute_txt = if speaker::is_muted() { "UNMUTE" } else { "MUTE" };
-        draw_button(fb, bx + 200, btn_y, 52, 22, mute_txt, Color::from_rgb(245, 158, 11));
+        // 5. Playback Controls (Windows 98 3D Raised Buttons)
+        let btn_y = by + 128;
+        let play_txt = if self.is_playing() { "Pause" } else { "Play" };
+        draw_button(fb, bx + 10, btn_y, 44, 22, play_txt, Color::BLACK);
+        draw_button(fb, bx + 58, btn_y, 42, 22, "Stop", Color::BLACK);
+        draw_button(fb, bx + 104, btn_y, 42, 22, "Prev", Color::BLACK);
+        draw_button(fb, bx + 150, btn_y, 42, 22, "Next", Color::BLACK);
+        let mute_txt = if speaker::is_muted() { "Unmute" } else { "Mute" };
+        draw_button(fb, bx + 196, btn_y, 52, 22, mute_txt, Color::BLACK);
 
-        let (mode_lbl, mode_col) = match self.mode {
-            PlayerMode::Mp3 => ("MODE: MP3", Color::from_rgb(56, 189, 248)),
-            PlayerMode::Chiptune => ("MODE: 8-BIT", Color::from_rgb(234, 179, 8)),
+        let mode_lbl = match self.mode {
+            PlayerMode::Mp3 => "Mode: MP3",
+            PlayerMode::Chiptune => "Mode: 8-Bit",
         };
-        draw_button(fb, bx + 256, btn_y, 90, 22, mode_lbl, mode_col);
+        draw_button(fb, bx + 252, btn_y, 90, 22, mode_lbl, Color::BLACK);
 
-        // 6. Playlist View
-        let list_y = by + 166;
-        let list_header = match self.mode {
-            PlayerMode::Mp3 => "PLAYLIST (MP3 TRACKS):",
-            PlayerMode::Chiptune => "PLAYLIST (8-BIT CHIPTUNES):",
-        };
-        fb.draw_string(bx + 14, list_y, list_header, Color::from_rgb(148, 163, 184));
+        // 6. Playlist View (Sunken White Listbox)
+        let list_y = by + 156;
+        fb.draw_string(bx + 10, list_y, "Playlist:", Color::BLACK);
+
+        let box_y = list_y + 12;
+        let box_h = bh.saturating_sub((box_y - by) as usize + 6);
+        let box_w = bw.saturating_sub(16);
+        fb.fill_rect(bx + 8, box_y, box_w, box_h, Color::WHITE);
+        fb.draw_bevel_sunken(bx + 8, box_y, box_w, box_h);
 
         match self.mode {
             PlayerMode::Mp3 => {
                 for (i, t) in self.mp3_player.tracks.iter().enumerate() {
-                    let row_y = list_y + 16 + (i as isize * 18);
-                    if row_y + 16 > by + bh as isize { break; }
+                    let row_y = box_y + 2 + (i as isize * 18);
+                    if row_y + 16 > box_y + box_h as isize { break; }
                     let is_cur = i == self.mp3_player.current_track;
                     if is_cur {
-                        fb.fill_rect(bx + 12, row_y - 2, bw - 24, 16, Color::from_rgb(30, 41, 59));
-                        fb.draw_string(bx + 16, row_y, ">", Color::from_rgb(56, 189, 248));
+                        fb.fill_rect(bx + 10, row_y, box_w - 4, 16, Color::RETRO_SELECTION);
                     }
-                    let name_col = if is_cur { Color::from_rgb(56, 189, 248) } else { Color::from_rgb(226, 232, 240) };
+                    let name_col = if is_cur { Color::WHITE } else { Color::BLACK };
                     let row_txt = format!(
-                        "{} [{}] ({:02}:{:02})",
+                        "{}. {} ({:02}:{:02})",
+                        i + 1,
                         t.display_title(),
-                        t.metadata.genre.as_deref().unwrap_or("MP3"),
                         t.info.duration_seconds / 60,
                         t.info.duration_seconds % 60
                     );
-                    fb.draw_string(bx + 28, row_y, &row_txt, name_col);
+                    fb.draw_string(bx + 14, row_y + 4, &row_txt, name_col);
                 }
             }
             PlayerMode::Chiptune => {
                 for (i, t) in self.chiptune_tracks.iter().enumerate() {
-                    let row_y = list_y + 16 + (i as isize * 18);
-                    if row_y + 16 > by + bh as isize { break; }
+                    let row_y = box_y + 2 + (i as isize * 18);
+                    if row_y + 16 > box_y + box_h as isize { break; }
                     let is_cur = i == self.chiptune_track;
                     if is_cur {
-                        fb.fill_rect(bx + 12, row_y - 2, bw - 24, 16, Color::from_rgb(30, 41, 59));
-                        fb.draw_string(bx + 16, row_y, ">", Color::from_rgb(56, 189, 248));
+                        fb.fill_rect(bx + 10, row_y, box_w - 4, 16, Color::RETRO_SELECTION);
                     }
-                    let name_col = if is_cur { Color::from_rgb(56, 189, 248) } else { Color::from_rgb(226, 232, 240) };
-                    fb.draw_string(bx + 28, row_y, t.title, name_col);
+                    let name_col = if is_cur { Color::WHITE } else { Color::BLACK };
+                    let row_txt = format!("{}. {}", i + 1, t.title);
+                    fb.draw_string(bx + 14, row_y + 4, &row_txt, name_col);
                 }
             }
         }
     }
 }
 
-fn draw_button(fb: &mut Framebuffer, x: isize, y: isize, w: usize, h: usize, label: &str, accent: Color) {
-    fb.fill_rect(x, y, w, h, Color::from_rgb(30, 41, 59));
-    fb.draw_rect(x, y, w, h, accent);
+fn draw_button(fb: &mut Framebuffer, x: isize, y: isize, w: usize, h: usize, label: &str, _accent: Color) {
+    fb.draw_button(x, y, w, h, false);
     let lbl_w = label.len() * FONT_WIDTH;
     let lx = x + ((w as isize - lbl_w as isize) / 2);
     let ly = y + ((h as isize - 8) / 2);
-    fb.draw_string(lx, ly, label, Color::WHITE);
+    fb.draw_string(lx, ly, label, Color::BLACK);
 }

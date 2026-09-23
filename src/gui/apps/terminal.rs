@@ -384,7 +384,7 @@ impl TerminalApp {
 
 impl Application for TerminalApp {
     fn title(&self) -> &str {
-        "Terminal"
+        "MS-DOS Command Prompt"
     }
 
     fn render(
@@ -395,9 +395,8 @@ impl Application for TerminalApp {
         client_w: usize,
         client_h: usize,
     ) {
-        // Dark background
-        let bg_color = Color::from_rgb(15, 20, 28);
-        fb.fill_rect(client_x, client_y, client_w, client_h, bg_color);
+        // Classic DOS Pitch Black CRT background
+        fb.fill_rect(client_x, client_y, client_w, client_h, Color::BLACK);
 
         let line_height = FONT_HEIGHT as isize + 4;
         let padding = 8;

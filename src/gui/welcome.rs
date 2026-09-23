@@ -83,82 +83,63 @@ pub fn show_welcome_screen(fb: &mut Framebuffer) {
 
 fn render_welcome_frame(fb: &mut Framebuffer, progress: usize, ram_str: &str, heap_mb: usize) {
     let width = fb.width;
-    let height = fb.height;
+    let _height = fb.height;
 
-    // 1. Deep space gradient background
-    fb.draw_gradient_v(
-        0,
-        0,
-        width,
-        height,
-        Color::from_rgb(10, 16, 32),
-        Color::from_rgb(18, 28, 52),
-    );
+    // 1. Classic Windows 98 Teal canvas (#008080)
+    fb.clear(Color::RETRO_TEAL);
 
-    // Decorative subtle outer border
-    fb.draw_rect(4, 4, width - 8, height - 8, Color::from_rgb(30, 48, 82));
-    fb.draw_rect(6, 6, width - 12, height - 12, Color::from_rgb(20, 32, 58));
-
-    // 2. Glowing OS Title & Branding
-    let title = "MOUROS OS";
+    // 2. Retro OS Title & Branding
+    let title = "MOUROS 98";
     let title_scale = 4;
     let title_w = title.len() * (FONT_WIDTH * title_scale);
     let title_x = (width as isize - title_w as isize) / 2;
-    let title_y = 42;
+    let title_y = 36;
 
-    // Glow shadow
-    fb.draw_string_scaled(title_x + 2, title_y + 2, title, title_scale, Color::from_argb(60, 2, 132, 199));
-    // Main vibrant cyan text
-    fb.draw_string_scaled(title_x, title_y, title, title_scale, Color::from_rgb(56, 189, 248));
+    // Classic 3D Shadow & Highlight
+    fb.draw_string_scaled(title_x + 2, title_y + 2, title, title_scale, Color::from_rgb(0, 96, 96));
+    fb.draw_string_scaled(title_x, title_y, title, title_scale, Color::WHITE);
 
-    let subtitle = "Bare-Metal 64-Bit Desktop Operating System";
+    let subtitle = "Bare-Metal 64-Bit Operating System (Second Edition)";
     let sub_w = subtitle.len() * FONT_WIDTH;
     let sub_x = (width as isize - sub_w as isize) / 2;
-    fb.draw_string(sub_x, 90, subtitle, Color::from_rgb(226, 232, 240));
+    fb.draw_string(sub_x + 1, 85, subtitle, Color::BLACK);
+    fb.draw_string(sub_x, 84, subtitle, Color::WHITE);
 
-    let tagline = "Powered by Rust  *  Custom In-Tree Bootloader v1.0";
-    let tag_w = tagline.len() * FONT_WIDTH;
-    let tag_x = (width as isize - tag_w as isize) / 2;
-    fb.draw_string(tag_x, 108, tagline, Color::from_rgb(100, 116, 139));
-
-    // 3. Centered System Diagnostics Card
+    // 3. Centered 3D Raised System Diagnostics Dialog
     let card_w = 580;
     let card_h = 200;
     let card_x = (width as isize - card_w as isize) / 2;
-    let card_y = 138;
+    let card_y = 114;
 
-    fb.draw_shadow(card_x, card_y, card_w, card_h, 8);
-    fb.fill_rect(card_x, card_y, card_w, card_h, Color::from_rgb(15, 23, 42));
-    fb.draw_rect(card_x, card_y, card_w, card_h, Color::from_rgb(51, 65, 85));
+    fb.fill_rect(card_x, card_y, card_w, card_h, Color::RETRO_FACE);
+    fb.draw_bevel_raised(card_x, card_y, card_w, card_h);
 
-    // Card header
-    fb.draw_gradient_v(
-        card_x + 1,
-        card_y + 1,
-        card_w - 2,
-        28,
-        Color::from_rgb(30, 41, 59),
-        Color::from_rgb(24, 32, 47),
+    // Windows 98 Titlebar for Dialog
+    fb.draw_gradient_h(
+        card_x + 3,
+        card_y + 3,
+        card_w - 6,
+        20,
+        Color::RETRO_ACTIVE_TITLE_LEFT,
+        Color::RETRO_ACTIVE_TITLE_RIGHT,
     );
-    fb.fill_rect(card_x + 1, card_y + 28, card_w - 2, 1, Color::from_rgb(71, 85, 105));
-    fb.draw_string(card_x + 16, card_y + 10, "SYSTEM & HARDWARE SUBSYSTEM INITIALIZATION", Color::from_rgb(226, 232, 240));
+    fb.draw_string(card_x + 10, card_y + 7, "System & Hardware Initialization", Color::WHITE);
 
     let diag_items: [(&str, String); 6] = [
         ("Bootloader", String::from("Mouros In-Tree MBR / Stage 2 / Stage 3 / Stage 4")),
         ("Processor", String::from("x86_64 Long Mode (Paging Active, SSE2 Enabled)")),
-        ("Physical RAM", format!("{} [Kernel Heap: {} MiB]", ram_str, heap_mb)),
+        ("Physical RAM", format!("{} [Kernel Heap: {} MB]", ram_str, heap_mb)),
         ("Video Device", String::from("Bochs BGA 800x600 32bpp True Color Linear FB")),
         ("Input Driver", String::from("Lock-Free PS/2 Mouse & Keyboard (IRQ 1 & 12)")),
         ("Real-Time", String::from("CMOS Hardware RTC & 8254 PIT Timer Active")),
     ];
 
-    let mut item_y = card_y + 38;
+    let mut item_y = card_y + 34;
     for (label, val) in &diag_items {
-        // [ OK ] tag in vivid green
-        fb.draw_string(card_x + 16, item_y, "[ OK ]", Color::from_rgb(34, 197, 94));
-        fb.draw_string(card_x + 72, item_y, label, Color::from_rgb(148, 163, 184));
-        fb.draw_string(card_x + 172, item_y, ":", Color::from_rgb(100, 116, 139));
-        fb.draw_string(card_x + 184, item_y, val, Color::from_rgb(241, 245, 249));
+        fb.draw_string(card_x + 16, item_y, "[ OK ]", Color::from_rgb(0, 128, 0));
+        fb.draw_string(card_x + 72, item_y, label, Color::BLACK);
+        fb.draw_string(card_x + 172, item_y, ":", Color::BLACK);
+        fb.draw_string(card_x + 184, item_y, val, Color::from_rgb(0, 0, 128));
         item_y += 24;
     }
 
@@ -177,43 +158,47 @@ fn render_welcome_frame(fb: &mut Framebuffer, progress: usize, ram_str: &str, he
 
     let msg_w = status_msg.len() * FONT_WIDTH;
     let msg_x = (width as isize - msg_w as isize) / 2;
-    fb.draw_string(msg_x, 370, status_msg, Color::from_rgb(186, 230, 253));
+    fb.draw_string(msg_x + 1, 345, status_msg, Color::BLACK);
+    fb.draw_string(msg_x, 344, status_msg, Color::WHITE);
 
-    // 5. Progress Bar
+    // 5. Classic Windows 98 Progress Bar (Sunken white track with discrete navy blocks)
     let bar_w = 460;
-    let bar_h = 16;
+    let bar_h = 18;
     let bar_x = (width as isize - bar_w as isize) / 2;
-    let bar_y = 394;
+    let bar_y = 368;
 
-    fb.fill_rect(bar_x, bar_y, bar_w, bar_h, Color::from_rgb(15, 23, 42));
-    fb.draw_rect(bar_x, bar_y, bar_w, bar_h, Color::from_rgb(51, 65, 85));
+    fb.fill_rect(bar_x, bar_y, bar_w, bar_h, Color::WHITE);
+    fb.draw_bevel_sunken(bar_x, bar_y, bar_w, bar_h);
 
-    let fill_w = (bar_w.saturating_sub(4) * progress) / 100;
-    if fill_w > 0 {
-        fb.draw_gradient_v(
-            bar_x + 2,
-            bar_y + 2,
-            fill_w,
-            bar_h - 4,
-            Color::from_rgb(56, 189, 248),
-            Color::from_rgb(14, 165, 233),
+    let fill_w = (bar_w.saturating_sub(6) * progress) / 100;
+    let mut cur_bx = 0;
+    while cur_bx + 10 <= fill_w {
+        fb.fill_rect(
+            bar_x + 3 + cur_bx as isize,
+            bar_y + 3,
+            8,
+            bar_h - 6,
+            Color::RETRO_SELECTION, // Windows 98 Navy Blocks
         );
+        cur_bx += 10;
     }
 
     // Progress percentage label
     let pct_str = format!("{:3}%", progress);
-    fb.draw_string(bar_x + bar_w as isize + 12, bar_y + 4, &pct_str, Color::from_rgb(241, 245, 249));
+    fb.draw_string(bar_x + bar_w as isize + 12, bar_y + 4, &pct_str, Color::WHITE);
 
     // 6. User Instruction Hints
     let hint1 = "Press [ENTER], [SPACE], or CLICK anywhere to launch Desktop";
     let h1_w = hint1.len() * FONT_WIDTH;
     let h1_x = (width as isize - h1_w as isize) / 2;
-    fb.draw_string(h1_x, 460, hint1, Color::from_rgb(241, 245, 249));
+    fb.draw_string(h1_x + 1, 421, hint1, Color::BLACK);
+    fb.draw_string(h1_x, 420, hint1, Color::WHITE);
 
     let hint2 = "Or wait for automatic system initialization...";
     let h2_w = hint2.len() * FONT_WIDTH;
     let h2_x = (width as isize - h2_w as isize) / 2;
-    fb.draw_string(h2_x, 480, hint2, Color::from_rgb(100, 116, 139));
+    fb.draw_string(h2_x + 1, 441, hint2, Color::BLACK);
+    fb.draw_string(h2_x, 440, hint2, Color::from_rgb(180, 220, 220));
 
     // 7. Render mouse cursor on top
     let mouse_state = mouse::get_mouse_state();

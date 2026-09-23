@@ -43,6 +43,22 @@ impl Color {
     pub const TEXT_MUTED: Color = Color::from_rgb(148, 163, 184);
     pub const TEXT_DARK: Color = Color::from_rgb(15, 23, 42);
 
+    // Retro Windows 98 & Mac OS 9 Color Palette
+    pub const RETRO_TEAL: Color = Color::from_rgb(0, 128, 128);          // #008080 Classic Windows 98 Desktop
+    pub const RETRO_FACE: Color = Color::from_rgb(192, 192, 192);        // #C0C0C0 Classic 3D Face / Window Gray
+    pub const RETRO_LIGHT: Color = Color::from_rgb(255, 255, 255);       // #FFFFFF 3D Outer Highlight
+    pub const RETRO_HIGHLIGHT: Color = Color::from_rgb(223, 223, 223);   // #DFDFDF 3D Inner Highlight
+    pub const RETRO_SHADOW: Color = Color::from_rgb(128, 128, 128);      // #808080 3D Inner Shadow
+    pub const RETRO_DARK_SHADOW: Color = Color::from_rgb(0, 0, 0);       // #000000 3D Outer Shadow
+    pub const RETRO_ACTIVE_TITLE_LEFT: Color = Color::from_rgb(0, 0, 128);     // #000080 Windows 98 Title Navy
+    pub const RETRO_ACTIVE_TITLE_RIGHT: Color = Color::from_rgb(16, 132, 208); // #1084D0 Windows 98 Title Cerulean
+    pub const RETRO_INACTIVE_TITLE_LEFT: Color = Color::from_rgb(128, 128, 128); // #808080 Inactive Title Gray
+    pub const RETRO_INACTIVE_TITLE_RIGHT: Color = Color::from_rgb(181, 181, 181); // #B5B5B5 Inactive Title Silver
+    pub const RETRO_SELECTION: Color = Color::from_rgb(0, 0, 128);       // #000080 Selection Bar Blue
+    pub const RETRO_TEXT: Color = Color::from_rgb(0, 0, 0);              // #000000 Classic Black Text
+    pub const RETRO_MACOS_PLATINUM: Color = Color::from_rgb(214, 214, 214); // #D6D6D6 Mac OS 9 Platinum Gray
+    pub const RETRO_TOOLTIP_BG: Color = Color::from_rgb(255, 255, 225); // #FFFFE1 Classic Windows Tooltip
+
     pub const fn new(r: u8, g: u8, b: u8) -> Self {
         Self::from_rgb(r, g, b)
     }

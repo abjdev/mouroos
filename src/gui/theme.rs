@@ -3,7 +3,7 @@ use crate::gui::color::Color;
 use crate::gui::font::FONT_WIDTH;
 use spin::Mutex;
 
-static CURRENT_THEME: Mutex<ThemeKind> = Mutex::new(ThemeKind::DeepSpace);
+static CURRENT_THEME: Mutex<ThemeKind> = Mutex::new(ThemeKind::Windows98);
 static PENDING_THEME: Mutex<Option<ThemeKind>> = Mutex::new(None);
 
 pub fn set_theme(kind: ThemeKind) {
@@ -21,6 +21,8 @@ pub fn take_pending_theme() -> Option<ThemeKind> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThemeKind {
+    Windows98,
+    MacOS9,
     DeepSpace,
     CyberpunkNeon,
     MatrixEmerald,
@@ -47,9 +49,39 @@ pub struct Theme {
 impl Theme {
     pub fn get(kind: ThemeKind) -> Self {
         match kind {
+            ThemeKind::Windows98 => Self {
+                kind,
+                name: "Windows 98 (Memphis)",
+                accent_color: Color::RETRO_SELECTION,
+                win_title_active_top: Color::RETRO_ACTIVE_TITLE_LEFT,
+                win_title_active_bot: Color::RETRO_ACTIVE_TITLE_RIGHT,
+                win_title_inactive: Color::RETRO_INACTIVE_TITLE_LEFT,
+                win_border_active: Color::RETRO_FACE,
+                win_border_inactive: Color::RETRO_FACE,
+                taskbar_top: Color::RETRO_FACE,
+                taskbar_bot: Color::RETRO_FACE,
+                start_btn: Color::RETRO_FACE,
+                wallpaper_top: Color::RETRO_TEAL,
+                wallpaper_bot: Color::RETRO_TEAL,
+            },
+            ThemeKind::MacOS9 => Self {
+                kind,
+                name: "Mac OS 9 (Platinum)",
+                accent_color: Color::from_rgb(0, 0, 128),
+                win_title_active_top: Color::RETRO_MACOS_PLATINUM,
+                win_title_active_bot: Color::from_rgb(180, 180, 180),
+                win_title_inactive: Color::from_rgb(200, 200, 200),
+                win_border_active: Color::RETRO_MACOS_PLATINUM,
+                win_border_inactive: Color::RETRO_MACOS_PLATINUM,
+                taskbar_top: Color::RETRO_MACOS_PLATINUM,
+                taskbar_bot: Color::from_rgb(190, 190, 190),
+                start_btn: Color::RETRO_MACOS_PLATINUM,
+                wallpaper_top: Color::from_rgb(100, 120, 140),
+                wallpaper_bot: Color::from_rgb(70, 90, 110),
+            },
             ThemeKind::DeepSpace => Self {
                 kind,
-                name: "Deep Space (Default)",
+                name: "Deep Space",
                 accent_color: Color::from_rgb(56, 189, 248),
                 win_title_active_top: Color::from_rgb(2, 132, 199),
                 win_title_active_bot: Color::from_rgb(3, 105, 161),
@@ -113,6 +145,44 @@ impl Theme {
     /// Render wallpaper into a pixel buffer
     pub fn render_wallpaper(&self, width: usize, height: usize) -> Vec<u32> {
         let mut buf = alloc::vec![0u32; width * height];
+
+        if self.kind == ThemeKind::Windows98 {
+            // Authentic solid Windows 98 Teal canvas (#008080)
+            buf.fill(Color::RETRO_TEAL.raw);
+
+            // Centered nostalgic retro watermark
+            let watermark = "MOUROS 98";
+            let scale = 4;
+            let wm_w = watermark.len() * (FONT_WIDTH * scale);
+            let wm_x = (width as isize - wm_w as isize) / 2;
+            let wm_y = (height as isize - 100) / 2;
+            let wm_shadow = Color::from_rgb(0, 96, 96);
+            let wm_color = Color::from_rgb(0, 160, 160);
+
+            // Shadow
+            for (ci, ch) in watermark.chars().enumerate() {
+                let cx = wm_x + (ci * FONT_WIDTH * scale) as isize + 2;
+                draw_char_to_buffer(&mut buf, width, height, cx, wm_y + 2, ch, scale, wm_shadow);
+            }
+            // Highlight
+            for (ci, ch) in watermark.chars().enumerate() {
+                let cx = wm_x + (ci * FONT_WIDTH * scale) as isize;
+                draw_char_to_buffer(&mut buf, width, height, cx, wm_y, ch, scale, wm_color);
+            }
+            return buf;
+        }
+
+        if self.kind == ThemeKind::MacOS9 {
+            // Mac OS 9 subtle pinstripes
+            let c1 = Color::from_rgb(110, 130, 150).raw;
+            let c2 = Color::from_rgb(100, 120, 140).raw;
+            for y in 0..height {
+                let col = if (y / 2) % 2 == 0 { c1 } else { c2 };
+                let row_start = y * width;
+                buf[row_start..row_start + width].fill(col);
+            }
+            return buf;
+        }
 
         for y in 0..height {
             let t = ((y * 256) / height.max(1)) as u16;

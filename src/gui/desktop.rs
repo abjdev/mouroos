@@ -16,7 +16,7 @@ use alloc::vec::Vec;
 use pc_keyboard::{DecodedKey, HandleControl, Keyboard, ScancodeSet1, layouts};
 use x86_64::instructions::port::Port;
 
-const TASKBAR_HEIGHT: usize = 32;
+const TASKBAR_HEIGHT: usize = 28;
 
 struct DesktopIcon {
     name: &'static str,
@@ -48,7 +48,7 @@ pub struct Desktop {
 
 impl Desktop {
     pub fn new(fb: Framebuffer) -> Self {
-        let theme = Theme::get(ThemeKind::DeepSpace);
+        let theme = Theme::get(ThemeKind::Windows98);
         let wallpaper = theme.render_wallpaper(fb.width, fb.height);
 
         let icons = [
@@ -325,18 +325,19 @@ impl Desktop {
 
         // 1. Check Taskbar Clicks
         if ev.y >= taskbar_y {
-            // Start button click: (x: 4..84)
-            if ev.x >= 4 && ev.x <= 84 {
+            // Start button click: (x: 3..73)
+            if ev.x >= 3 && ev.x <= 73 {
                 self.start_menu_open = !self.start_menu_open;
                 return true;
             }
 
             // Taskbar window tabs (dynamically sized)
-            let mut tab_x = 94;
-            let tray_x = (self.fb.width as isize - 200).max(100);
+            let mut tab_x = 77;
+            let tray_w = 120;
+            let tray_x = (self.fb.width as isize - tray_w - 4).max(100);
             let available_tab_space = (tray_x - tab_x).max(60) as usize;
             let num_windows = self.windows.len().max(1);
-            let tab_w = ((available_tab_space / num_windows).saturating_sub(4)).clamp(60, 110) as isize;
+            let tab_w = ((available_tab_space / num_windows).saturating_sub(4)).clamp(60, 140) as isize;
 
             for i in 0..self.windows.len() {
                 if ev.x >= tab_x && ev.x < tab_x + tab_w {
@@ -357,15 +358,14 @@ impl Desktop {
         // 2. Check Start Menu Clicks if open
         if self.start_menu_open {
             let menu_w = 210;
-            let menu_h = 310;
-            let menu_x = 4;
+            let menu_h = 276;
+            let menu_x = 2;
             let menu_y = taskbar_y - menu_h as isize;
 
             if ev.x >= menu_x && ev.x < menu_x + menu_w && ev.y >= menu_y && ev.y < menu_y + menu_h {
-                let item_h = 25;
-                let rel_y = ev.y - (menu_y + 28);
+                let rel_y = ev.y - (menu_y + 4);
                 if rel_y >= 0 {
-                    let item_idx = rel_y / item_h;
+                    let item_idx = (rel_y / 24) as usize;
                     match item_idx {
                         0 => self.spawn_terminal(140, 80, 480, 270),
                         1 => self.spawn_sysinfo(180, 100, 420, 260),
@@ -514,19 +514,25 @@ impl Desktop {
         // 1. Fast blit pre-rendered wallpaper (memcpy ~0.2ms)
         self.fb.backbuffer.copy_from_slice(&self.wallpaper);
 
-        // 2. Render Desktop Icons with 24x24 icons
+        // 2. Render Desktop Icons (Clean Windows 98 style directly on teal desktop)
+        let mouse_state = mouse::get_mouse_state();
         for icon in &self.icons {
-            // Semi-transparent tile background
-            self.fb.fill_rect(icon.x, icon.y, 54, 52, Color::from_argb(60, 15, 23, 42));
-            self.fb.draw_rect(icon.x, icon.y, 54, 52, Color::from_argb(80, 100, 116, 139));
+            let is_hovered = mouse_state.x >= icon.x && mouse_state.x < icon.x + 54
+                && mouse_state.y >= icon.y && mouse_state.y < icon.y + 54;
+
+            if is_hovered {
+                // Retro selection box
+                self.fb.draw_rect(icon.x + 2, icon.y + 2, 50, 48, Color::RETRO_HIGHLIGHT);
+            }
 
             // Custom 24x24 Pixel Art Icon
             icons::draw_icon_24(&mut self.fb, icon.x + 15, icon.y + 6, icon.app_id.into());
 
-            // Icon label
+            // Icon label with retro drop shadow on teal background
             let label_len = icon.name.len() * FONT_WIDTH;
             let lx = icon.x + (54 - label_len as isize) / 2;
-            self.fb.draw_string(lx, icon.y + 36, icon.name, Color::from_rgb(241, 245, 249));
+            self.fb.draw_string(lx + 1, icon.y + 36, icon.name, Color::BLACK);
+            self.fb.draw_string(lx, icon.y + 35, icon.name, Color::WHITE);
         }
 
         // 3. Render Windows in z-order
@@ -534,98 +540,126 @@ impl Desktop {
             win.render(&mut self.fb);
         }
 
-        // 4. Render Taskbar
+        // 4. Render Taskbar (Classic 3D Raised Windows 98 Taskbar)
         let taskbar_y = (self.fb.height - TASKBAR_HEIGHT) as isize;
-        self.fb.draw_gradient_v(
-            0,
-            taskbar_y,
-            self.fb.width,
-            TASKBAR_HEIGHT,
-            self.theme.taskbar_top,
-            self.theme.taskbar_bot,
-        );
-        self.fb.fill_rect(0, taskbar_y, self.fb.width, 1, self.theme.win_border_inactive);
+        self.fb.fill_rect(0, taskbar_y, self.fb.width, TASKBAR_HEIGHT, Color::RETRO_FACE);
+        self.fb.fill_rect(0, taskbar_y, self.fb.width, 1, Color::RETRO_LIGHT);
+        self.fb.fill_rect(0, taskbar_y + 1, self.fb.width, 1, Color::RETRO_HIGHLIGHT);
 
         // Start Menu Button
-        let start_bg = if self.start_menu_open {
-            Color::START_BTN_HOVER
-        } else {
-            self.theme.start_btn
-        };
-        self.fb.fill_rect(4, taskbar_y + 4, 80, 24, start_bg);
-        self.fb.draw_rect(4, taskbar_y + 4, 80, 24, self.theme.accent_color);
-        self.fb.draw_string(14, taskbar_y + 10, "MOUROS", Color::WHITE);
+        let start_pressed = self.start_menu_open;
+        let start_off = if start_pressed { 1 } else { 0 };
+        self.fb.draw_button(3, taskbar_y + 3, 70, 22, start_pressed);
 
-        // Window Tabs on Taskbar (dynamically sized to fit available space)
-        let mut tab_x = 94;
-        let tray_x = (self.fb.width as isize - 200).max(100);
+        // 4-color retro logo (red, green, blue, yellow squares)
+        let flag_x = 7 + start_off;
+        let flag_y = taskbar_y + 6 + start_off;
+        self.fb.fill_rect(flag_x, flag_y, 4, 4, Color::from_rgb(239, 68, 68)); // Red
+        self.fb.fill_rect(flag_x + 5, flag_y, 4, 4, Color::from_rgb(34, 197, 94)); // Green
+        self.fb.fill_rect(flag_x, flag_y + 5, 4, 4, Color::from_rgb(59, 130, 246)); // Blue
+        self.fb.fill_rect(flag_x + 5, flag_y + 5, 4, 4, Color::from_rgb(234, 179, 8)); // Yellow
+
+        // Start text
+        self.fb.draw_string(flag_x + 14, taskbar_y + 7 + start_off, "Start", Color::BLACK);
+        self.fb.draw_string(flag_x + 15, taskbar_y + 7 + start_off, "Start", Color::BLACK); // Bold
+
+        // Window Tabs on Taskbar
+        let mut tab_x = 78;
+        let tray_w = 120;
+        let tray_x = (self.fb.width as isize - tray_w - 4).max(100);
         let available_tab_space = (tray_x - tab_x).max(60) as usize;
         let num_windows = self.windows.len().max(1);
-        let tab_w = ((available_tab_space / num_windows).saturating_sub(4)).clamp(60, 110);
+        let tab_w = ((available_tab_space / num_windows).saturating_sub(4)).clamp(60, 140) as isize;
 
         for win in &self.windows {
-            let tab_bg = if win.is_focused && !win.is_minimized {
-                Color::from_rgb(51, 65, 85)
-            } else if win.is_minimized {
-                Color::from_rgb(30, 41, 59)
-            } else {
-                Color::from_rgb(38, 48, 66)
-            };
+            let is_active = win.is_focused && !win.is_minimized;
+            let toff = if is_active { 1 } else { 0 };
 
-            self.fb.fill_rect(tab_x, taskbar_y + 4, tab_w, 24, tab_bg);
-            let border_c = if win.is_focused {
-                self.theme.accent_color
-            } else {
-                Color::from_rgb(71, 85, 105)
-            };
-            self.fb.draw_rect(tab_x, taskbar_y + 4, tab_w, 24, border_c);
+            self.fb.draw_button(tab_x, taskbar_y + 3, tab_w as usize, 22, is_active);
 
-            // Tab title truncated to fit tab width
+            // Active tab subtle dither pattern
+            if is_active {
+                for dy in 2..20 {
+                    for dx in (2 + (dy % 2)..tab_w as usize - 2).step_by(2) {
+                        self.fb.draw_pixel(tab_x + dx as isize, taskbar_y + 3 + dy as isize, Color::RETRO_LIGHT);
+                    }
+                }
+            }
+
+            // Tab 16x16 icon
+            let icon = Self::icon_from_title(win.app.title());
+            icons::draw_icon_16(&mut self.fb, tab_x + 4 + toff, taskbar_y + 4 + toff, icon);
+
+            // Tab title
             let title = win.app.title();
-            let max_chars = (tab_w.saturating_sub(16) / FONT_WIDTH).max(1);
+            let max_chars = (tab_w.saturating_sub(26) as usize / FONT_WIDTH).max(1);
             let display_title = if title.len() > max_chars {
                 &title[..max_chars]
             } else {
                 title
             };
-            self.fb.draw_string(tab_x + 8, taskbar_y + 10, display_title, Color::WHITE);
+            self.fb.draw_string(tab_x + 22 + toff, taskbar_y + 7 + toff, display_title, Color::BLACK);
 
-            tab_x += tab_w as isize + 4;
+            tab_x += tab_w + 4;
         }
 
         // System Tray (Right side of taskbar)
+        self.fb.draw_sunken_panel(tray_x, taskbar_y + 3, tray_w as usize, 22);
+
+        // Retro speaker icon in system tray (8x8)
+        let spk_x = tray_x + 6;
+        let spk_y = taskbar_y + 7;
+        self.fb.fill_rect(spk_x, spk_y + 2, 2, 4, Color::BLACK);
+        self.fb.draw_pixel(spk_x + 2, spk_y + 1, Color::BLACK);
+        self.fb.draw_pixel(spk_x + 3, spk_y, Color::BLACK);
+        self.fb.draw_pixel(spk_x + 2, spk_y + 6, Color::BLACK);
+        self.fb.draw_pixel(spk_x + 3, spk_y + 7, Color::BLACK);
+        self.fb.fill_rect(spk_x + 3, spk_y + 1, 1, 6, Color::BLACK);
+        // Sound waves
+        self.fb.draw_pixel(spk_x + 5, spk_y + 2, Color::BLACK);
+        self.fb.draw_pixel(spk_x + 5, spk_y + 5, Color::BLACK);
+        self.fb.draw_pixel(spk_x + 7, spk_y + 1, Color::BLACK);
+        self.fb.draw_pixel(spk_x + 7, spk_y + 6, Color::BLACK);
+
+        // System Tray Clock
         let clock = self.clock_cache;
         let clock_str = format!("{:02}:{:02}:{:02}", clock.hours, clock.minutes, clock.seconds);
-        let clock_x = self.fb.width as isize - 80;
-        self.fb.draw_string(clock_x, taskbar_y + 10, &clock_str, Color::from_rgb(251, 191, 36));
+        self.fb.draw_string(tray_x + 22, taskbar_y + 7, &clock_str, Color::BLACK);
 
-        let mem_info = crate::memory::get_system_memory_info();
-        let (heap_used, _) = crate::allocator::heap_stats();
-        let used_mb = (heap_used / (1024 * 1024)).max(1);
-        let total_ram_mb = mem_info.total_ram_bytes / (1024 * 1024);
-        let mem_str = if total_ram_mb >= 1024 {
-            format!("RAM: {}M/{}G", used_mb, total_ram_mb / 1024)
-        } else {
-            format!("RAM: {}M/{}M", used_mb, total_ram_mb)
-        };
-        let mem_w = (mem_str.len() * 8) as isize;
-        let mem_x = clock_x - mem_w - 16;
-        self.fb.draw_string(mem_x, taskbar_y + 10, &mem_str, Color::from_rgb(148, 163, 184));
-
-        // 5. Render Start Menu Popup if open
+        // 5. Render Start Menu Popup if open (Windows 98 Style)
         if self.start_menu_open {
             let menu_w = 210;
-            let menu_h = 310;
-            let menu_x = 4;
+            let menu_h = 276;
+            let menu_x = 2;
             let menu_y = taskbar_y - menu_h as isize;
 
-            self.fb.draw_shadow(menu_x, menu_y, menu_w, menu_h, 6);
-            self.fb.fill_rect(menu_x, menu_y, menu_w, menu_h, Color::from_rgb(24, 32, 47));
-            self.fb.draw_rect(menu_x, menu_y, menu_w, menu_h, self.theme.accent_color);
+            // 3D raised border
+            self.fb.fill_rect(menu_x, menu_y, menu_w, menu_h, Color::RETRO_FACE);
+            self.fb.draw_bevel_raised(menu_x, menu_y, menu_w, menu_h);
 
-            // Header
-            self.fb.draw_gradient_v(menu_x + 1, menu_y + 1, menu_w - 2, 24, self.theme.start_btn, self.theme.win_title_active_bot);
-            self.fb.draw_string(menu_x + 8, menu_y + 7, "Mouros Applications", Color::WHITE);
+            // Iconic Windows 98 Vertical Gradient Banner
+            let banner_w = 24;
+            let banner_h = menu_h - 4;
+            self.fb.draw_gradient_v(
+                menu_x + 2,
+                menu_y + 2,
+                banner_w,
+                banner_h,
+                Color::from_rgb(0, 0, 128),
+                Color::from_rgb(16, 132, 208),
+            );
+
+            // Vertical lettering: "MOUROS 98"
+            let banner_chars = ['M', 'O', 'U', 'R', 'O', 'S', ' ', '9', '8'];
+            for (idx, &ch) in banner_chars.iter().enumerate() {
+                if ch != ' ' {
+                    let by = menu_y + 24 + (idx as isize * 20);
+                    // Shadow
+                    self.fb.draw_char(menu_x + 9, by + 1, ch, Color::BLACK);
+                    // Text
+                    self.fb.draw_char(menu_x + 8, by, ch, Color::WHITE);
+                }
+            }
 
             let items = [
                 (0, "Terminal"),
@@ -638,33 +672,76 @@ impl Desktop {
                 (7, "Desktop Settings"),
                 (8, "ELF Runner"),
                 (9, "DOOM (1993)"),
-                (10, "Reboot System"),
+                (10, "Shut Down..."),
             ];
 
             for (i, (icon_id, name)) in items.iter().enumerate() {
-                let iy = menu_y + 28 + (i as isize * 25);
-                // 16x16 Pixel Art Icon
-                icons::draw_icon_16(&mut self.fb, menu_x + 8, iy + 4, (*icon_id).into());
+                let iy = menu_y + 4 + (i as isize * 24);
+                let ix = menu_x + 28;
+                let iw = menu_w - 32;
 
-                let text_color = if *icon_id == 10 {
-                    Color::from_rgb(248, 113, 113) // Red for reboot
+                // Check hover
+                let is_hovered = mouse_state.x >= ix && mouse_state.x < ix + iw as isize
+                    && mouse_state.y >= iy && mouse_state.y < iy + 24;
+
+                if is_hovered {
+                    self.fb.fill_rect(ix, iy, iw, 24, Color::RETRO_SELECTION);
+                }
+
+                // Draw 16x16 icon
+                icons::draw_icon_16(&mut self.fb, ix + 4, iy + 4, (*icon_id).into());
+
+                let text_color = if is_hovered {
+                    Color::WHITE
+                } else if *icon_id == 10 {
+                    Color::from_rgb(180, 20, 20)
                 } else if *icon_id == 9 {
-                    Color::from_rgb(250, 204, 21) // Gold for DOOM
+                    Color::from_rgb(160, 100, 0)
                 } else {
-                    Color::from_rgb(241, 245, 249)
+                    Color::BLACK
                 };
-                self.fb.draw_string(menu_x + 30, iy + 7, name, text_color);
-                self.fb.fill_rect(menu_x + 8, iy + 24, menu_w - 16, 1, Color::from_rgb(38, 48, 66));
+
+                self.fb.draw_string(ix + 26, iy + 7, name, text_color);
+
+                // Groove separator before Shut Down
+                if i == 9 {
+                    self.fb.draw_groove(ix, iy + 24, iw, 2);
+                }
             }
         }
 
         // 6. Draw Mouse Cursor on top of everything
-        let mouse_state = mouse::get_mouse_state();
         self.save_cursor_bg(mouse_state.x, mouse_state.y);
         self.fb.draw_cursor(mouse_state.x, mouse_state.y);
 
         // 7. Blit backbuffer to screen
         self.fb.flush();
+    }
+
+    fn icon_from_title(title: &str) -> icons::AppIcon {
+        if title.contains("Terminal") {
+            icons::AppIcon::Terminal
+        } else if title.contains("System") || title.contains("SysInfo") {
+            icons::AppIcon::SysInfo
+        } else if title.contains("Calc") {
+            icons::AppIcon::Calculator
+        } else if title.contains("Notepad") {
+            icons::AppIcon::Notepad
+        } else if title.contains("Snake") {
+            icons::AppIcon::Snake
+        } else if title.contains("Music") || title.contains("MP3") || title.contains("Chiptune") {
+            icons::AppIcon::Music
+        } else if title.contains("Image") {
+            icons::AppIcon::ImageViewer
+        } else if title.contains("Setting") {
+            icons::AppIcon::Settings
+        } else if title.contains("ELF") {
+            icons::AppIcon::ElfRunner
+        } else if title.contains("DOOM") {
+            icons::AppIcon::Doom
+        } else {
+            icons::AppIcon::Terminal
+        }
     }
 }
 

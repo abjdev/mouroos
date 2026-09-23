@@ -120,32 +120,32 @@ impl Application for ImageViewerApp {
         bh: usize,
     ) {
 
-        // Dark slate gallery background
-        fb.fill_rect(bx, by, bw, bh, Color::from_rgb(15, 23, 42));
+        // Windows 98 Classic Gray casing
+        fb.fill_rect(bx, by, bw, bh, Color::RETRO_FACE);
 
         // 1. Controls Toolbar
         let tb_y = by + 6;
-        draw_tool_btn(fb, bx + 10, tb_y, 45, 22, "< PREV");
-        draw_tool_btn(fb, bx + 60, tb_y, 45, 22, "NEXT >");
-        let zoom_str = if self.zoom == 1 { "ZOOM 1x" } else { "ZOOM 2x" };
+        draw_tool_btn(fb, bx + 10, tb_y, 45, 22, "< Prev");
+        draw_tool_btn(fb, bx + 60, tb_y, 45, 22, "Next >");
+        let zoom_str = if self.zoom == 1 { "Zoom 1x" } else { "Zoom 2x" };
         draw_tool_btn(fb, bx + 115, tb_y, 55, 22, zoom_str);
 
         let filter_str = match self.filter {
-            FilterMode::Original => "FILTER: OFF",
-            FilterMode::Grayscale => "FILTER: GRAY",
-            FilterMode::Invert => "FILTER: INV",
-            FilterMode::Sepia => "FILTER: SEPIA",
+            FilterMode::Original => "Filter: Off",
+            FilterMode::Grayscale => "Filter: Gray",
+            FilterMode::Invert => "Filter: Inv",
+            FilterMode::Sepia => "Filter: Sepia",
         };
-        draw_tool_btn(fb, bx + 180, tb_y, 80, 22, filter_str);
+        draw_tool_btn(fb, bx + 180, tb_y, 90, 22, filter_str);
 
-        // 2. Picture viewport
+        // 2. Picture viewport (Sunken 3D frame)
         let vp_x = bx + 10;
         let vp_y = by + 34;
         let vp_w = bw - 20;
         let vp_h = bh.saturating_sub(60);
 
-        fb.fill_rect(vp_x, vp_y, vp_w, vp_h, Color::from_rgb(10, 15, 29));
-        fb.draw_rect(vp_x, vp_y, vp_w, vp_h, Color::from_rgb(51, 65, 85));
+        fb.fill_rect(vp_x, vp_y, vp_w, vp_h, Color::WHITE);
+        fb.draw_bevel_sunken(vp_x, vp_y, vp_w, vp_h);
 
         let cur_img = &self.gallery[self.current_idx];
         let disp_w = cur_img.width * self.zoom;
@@ -188,24 +188,24 @@ impl Application for ImageViewerApp {
             }
         }
 
-        // 3. Information Footer
+        // 3. Information Footer (Sunken status panel)
         let footer_y = by + bh as isize - 20;
+        fb.draw_sunken_panel(bx + 10, footer_y - 2, bw - 20, 18);
         let info = cur_img.title;
-        fb.draw_string(bx + 14, footer_y, info, Color::from_rgb(56, 189, 248));
+        fb.draw_string(bx + 16, footer_y + 2, info, Color::BLACK);
 
         let meta = "160x100 32bpp TrueColor";
         let mw = meta.len() * FONT_WIDTH;
-        fb.draw_string(bx + bw as isize - mw as isize - 14, footer_y, meta, Color::from_rgb(148, 163, 184));
+        fb.draw_string(bx + bw as isize - mw as isize - 16, footer_y + 2, meta, Color::BLACK);
     }
 }
 
 fn draw_tool_btn(fb: &mut Framebuffer, x: isize, y: isize, w: usize, h: usize, text: &str) {
-    fb.fill_rect(x, y, w, h, Color::from_rgb(30, 41, 59));
-    fb.draw_rect(x, y, w, h, Color::from_rgb(71, 85, 105));
+    fb.draw_button(x, y, w, h, false);
     let tw = text.len() * FONT_WIDTH;
     let tx = x + ((w as isize - tw as isize) / 2);
     let ty = y + ((h as isize - 8) / 2);
-    fb.draw_string(tx, ty, text, Color::from_rgb(226, 232, 240));
+    fb.draw_string(tx, ty, text, Color::BLACK);
 }
 
 // Procedural Artwork 1: Mouros 64-Bit Crest

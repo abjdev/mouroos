@@ -107,57 +107,57 @@ impl Application for ElfRunnerApp {
         w: usize,
         h: usize,
     ) {
-        // Background
-        fb.fill_rect(x, y, w, h, Color::new(24, 26, 32));
+        // Windows 98 Classic Gray casing
+        fb.fill_rect(x, y, w, h, Color::RETRO_FACE);
 
         // Left panel: Executable list (width: 175)
         let list_w = 175;
-        fb.fill_rect(x, y, list_w, h, Color::new(32, 35, 44));
-        fb.fill_rect(x + list_w as isize, y, 1, h, Color::new(50, 55, 68));
+        fb.draw_string(x + 10, y + 8, "Executables:", Color::BLACK);
 
-        fb.draw_string(x + 10, y + 8, "EXECUTABLES", Color::new(140, 150, 175));
+        // Sunken box for executables
+        let box_y = y + 24;
+        let box_h = h.saturating_sub(65);
+        fb.fill_rect(x + 8, box_y, list_w - 14, box_h, Color::WHITE);
+        fb.draw_bevel_sunken(x + 8, box_y, list_w - 14, box_h);
 
         for (i, entry) in self.entries.iter().enumerate() {
-            let item_y = y + 28 + (i as isize * 46);
+            let item_y = box_y + 4 + (i as isize * 42);
             let is_sel = i == self.selected_idx;
 
             if is_sel {
-                fb.fill_rect(x + 6, item_y, list_w - 12, 40, Color::new(55, 80, 130));
-                fb.draw_rect(x + 6, item_y, list_w - 12, 40, Color::new(100, 140, 220));
-            } else {
-                fb.fill_rect(x + 6, item_y, list_w - 12, 40, Color::new(40, 44, 56));
+                fb.fill_rect(x + 10, item_y, list_w - 18, 38, Color::RETRO_SELECTION);
             }
 
             // Name
-            let name_color = if is_sel { Color::WHITE } else { Color::new(210, 215, 225) };
-            fb.draw_string(x + 12, item_y + 6, entry.name, name_color);
+            let name_color = if is_sel { Color::WHITE } else { Color::BLACK };
+            fb.draw_string(x + 14, item_y + 4, entry.name, name_color);
 
             // Size badge
             let sz_str = alloc::format!("{} B", entry.data.len());
-            fb.draw_string(x + 12, item_y + 22, &sz_str, Color::new(130, 140, 160));
+            let sz_color = if is_sel { Color::RETRO_HIGHLIGHT } else { Color::RETRO_SHADOW };
+            fb.draw_string(x + 14, item_y + 20, &sz_str, sz_color);
         }
 
-        // Run Button in left panel bottom
-        let btn_y = y + h.saturating_sub(45) as isize;
-        fb.fill_rect(x + 10, btn_y, list_w - 20, 32, Color::new(40, 130, 70));
-        fb.draw_rect(x + 10, btn_y, list_w - 20, 32, Color::new(70, 190, 110));
-        fb.draw_string(x + 38, btn_y + 8, "[ RUN ELF ]", Color::WHITE);
+        // Run Button in left panel bottom (3D Raised Button)
+        let btn_y = y + h.saturating_sub(34) as isize;
+        fb.draw_button(x + 8, btn_y, list_w - 14, 26, false);
+        fb.draw_string(x + 50, btn_y + 8, "Run ELF", Color::BLACK);
 
         // Right panel: Header & Console output
-        let console_x = x + list_w as isize + 1;
-        let console_w = w.saturating_sub(list_w + 1);
+        let console_x = x + list_w as isize + 2;
+        let console_w = w.saturating_sub(list_w + 6);
 
         // Status bar at top of right panel
-        fb.fill_rect(console_x, y, console_w, 28, Color::new(30, 33, 42));
-        fb.fill_rect(console_x, y + 28, console_w, 1, Color::new(50, 55, 68));
         let status_desc = self.entries[self.selected_idx].desc;
         let disp = alloc::format!("{}: {}", status_desc, self.status_text);
-        fb.draw_string(console_x + 10, y + 8, &disp, Color::new(200, 215, 240));
+        fb.draw_sunken_panel(console_x, y + 4, console_w, 20);
+        fb.draw_string(console_x + 6, y + 8, &disp, Color::BLACK);
 
-        // Console background
-        let term_y = y + 29;
-        let term_h = h.saturating_sub(29);
-        fb.fill_rect(console_x, term_y, console_w, term_h, Color::new(16, 18, 22));
+        // Console background (Sunken black CRT terminal)
+        let term_y = y + 28;
+        let term_h = h.saturating_sub(34);
+        fb.fill_rect(console_x, term_y, console_w, term_h, Color::BLACK);
+        fb.draw_bevel_sunken(console_x, term_y, console_w, term_h);
 
         // Console text
         let max_visible = term_h / 16;

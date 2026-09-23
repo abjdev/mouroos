@@ -129,32 +129,32 @@ impl Application for CalculatorApp {
         client_w: usize,
         client_h: usize,
     ) {
-        // Calculator casing background
-        fb.fill_rect(client_x, client_y, client_w, client_h, Color::from_rgb(30, 36, 48));
+        // Calculator casing background (Windows 98 Classic Gray)
+        fb.fill_rect(client_x, client_y, client_w, client_h, Color::RETRO_FACE);
 
-        let padding = 12;
-        let display_height = 40;
+        let padding = 10;
+        let display_height = 36;
         let display_width = client_w.saturating_sub(padding * 2);
 
-        // Display screen LCD box
+        // Display screen: Classic 3D Sunken LCD box with crisp white background
         let disp_x = client_x + padding as isize;
         let disp_y = client_y + padding as isize;
-        fb.fill_rect(disp_x, disp_y, display_width, display_height, Color::from_rgb(15, 23, 42));
-        fb.draw_rect(disp_x, disp_y, display_width, display_height, Color::from_rgb(71, 85, 105));
+        fb.fill_rect(disp_x, disp_y, display_width, display_height, Color::WHITE);
+        fb.draw_bevel_sunken(disp_x, disp_y, display_width, display_height);
 
-        // Display numbers right-aligned
+        // Display numbers right-aligned in classic bold black font
         let num_str = &self.display;
         let text_width = num_str.len() * (FONT_WIDTH * 2);
-        let text_x = (disp_x + display_width as isize - 12 - text_width as isize).max(disp_x + 8);
-        let text_y = disp_y + 12;
-        fb.draw_string_scaled(text_x, text_y, num_str, 2, Color::from_rgb(52, 211, 153)); // LCD green
+        let text_x = (disp_x + display_width as isize - 10 - text_width as isize).max(disp_x + 6);
+        let text_y = disp_y + 10;
+        fb.draw_string_scaled(text_x, text_y, num_str, 2, Color::BLACK);
 
-        // 4x4 Button Grid
-        let grid_top = disp_y + display_height as isize + 12;
+        // 4x4 Button Grid (Windows 98 3D Beveled Buttons)
+        let grid_top = disp_y + display_height as isize + 10;
         let available_w = client_w.saturating_sub(padding * 2);
         let available_h = client_h.saturating_sub((grid_top - client_y) as usize + padding);
 
-        let btn_spacing = 8;
+        let btn_spacing = 6;
         let btn_w = (available_w.saturating_sub(btn_spacing * 3)) / 4;
         let btn_h = (available_h.saturating_sub(btn_spacing * 3)) / 4;
 
@@ -163,19 +163,21 @@ impl Application for CalculatorApp {
                 let bx = disp_x + (col_idx * (btn_w + btn_spacing)) as isize;
                 let by = grid_top + (row_idx * (btn_h + btn_spacing)) as isize;
 
-                let btn_bg = match label {
-                    "C" => Color::from_rgb(220, 38, 38), // red
-                    "+" | "-" | "*" | "/" | "=" => Color::from_rgb(234, 88, 12), // vibrant orange
-                    _ => Color::from_rgb(51, 65, 85), // dark slate
-                };
+                // 3D Raised button
+                fb.draw_button(bx, by, btn_w, btn_h, false);
 
-                fb.fill_rect(bx, by, btn_w, btn_h, btn_bg);
-                fb.draw_rect(bx, by, btn_w, btn_h, Color::from_rgb(100, 116, 139));
+                // Windows 98 classic button text colors:
+                // Numbers: Deep Blue (#000080)
+                // Operators & Clear: Crimson Red (#B00000)
+                let text_color = match label {
+                    "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" => Color::from_rgb(0, 0, 160),
+                    _ => Color::from_rgb(180, 0, 0),
+                };
 
                 // Button label centered
                 let lbl_x = bx + (btn_w as isize - FONT_WIDTH as isize) / 2;
                 let lbl_y = by + (btn_h as isize - FONT_HEIGHT as isize) / 2;
-                fb.draw_string(lbl_x, lbl_y, label, Color::WHITE);
+                fb.draw_string(lbl_x, lbl_y, label, text_color);
             }
         }
     }

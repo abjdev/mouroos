@@ -294,32 +294,31 @@ impl Application for DoomApp {
         client_w: usize,
         client_h: usize,
     ) {
-        // 1. Dark charcoal/slate background
-        fb.fill_rect(client_x, client_y, client_w, client_h, Color::from_rgb(18, 18, 24));
+        // 1. Windows 98 Classic Gray casing
+        fb.fill_rect(client_x, client_y, client_w, client_h, Color::RETRO_FACE);
 
         // 2. Toolbar Header (height 26px)
         let tb_y = client_y + 2;
         let cur_map = EPISODE_MAPS[self.current_map_idx];
-        draw_button(fb, client_x + 8, tb_y, 74, 22, &format!("MAP: {}", cur_map), Color::from_rgb(220, 38, 38));
+        draw_button(fb, client_x + 8, tb_y, 74, 22, &format!("MAP: {}", cur_map), Color::BLACK);
         let scale_lbl = if self.scale == 2 { "SCALE 2x" } else { "SCALE 1x" };
-        draw_button(fb, client_x + 88, tb_y, 65, 22, scale_lbl, Color::from_rgb(51, 65, 85));
-        draw_button(fb, client_x + 159, tb_y, 60, 22, "RESTART", Color::from_rgb(51, 65, 85));
+        draw_button(fb, client_x + 88, tb_y, 65, 22, scale_lbl, Color::BLACK);
+        draw_button(fb, client_x + 159, tb_y, 60, 22, "RESTART", Color::BLACK);
         let pause_lbl = if self.is_paused { "RESUME" } else { "PAUSE" };
-        let pause_col = if self.is_paused { Color::from_rgb(234, 179, 8) } else { Color::from_rgb(51, 65, 85) };
-        draw_button(fb, client_x + 225, tb_y, 55, 22, pause_lbl, pause_col);
-        draw_button(fb, client_x + 286, tb_y, 66, 22, "HELP (H)", Color::from_rgb(51, 65, 85));
+        draw_button(fb, client_x + 225, tb_y, 55, 22, pause_lbl, Color::BLACK);
+        draw_button(fb, client_x + 286, tb_y, 66, 22, "HELP (H)", Color::BLACK);
 
         // FPS & Map Status on right side of toolbar
         let stat_str = format!("35Hz | {} FPS", self.fps);
         let stat_x = client_x + client_w as isize - (stat_str.len() * 8) as isize - 10;
-        fb.draw_string(stat_x, tb_y + 6, &stat_str, Color::from_rgb(148, 163, 184));
+        fb.draw_string(stat_x, tb_y + 6, &stat_str, Color::BLACK);
 
         if let Some((msg, _)) = &self.status_msg {
-            fb.draw_string(client_x + 360, tb_y + 6, msg, Color::from_rgb(34, 197, 94));
+            fb.draw_string(client_x + 360, tb_y + 6, msg, Color::from_rgb(0, 128, 0));
         }
 
-        // Toolbar separator line
-        fb.fill_rect(client_x, client_y + 26, client_w, 1, Color::from_rgb(45, 55, 72));
+        // Toolbar etched groove
+        fb.draw_groove(client_x, client_y + 26, client_w, 2);
 
         // 3. Render Doom Game Viewport
         let vp_top = client_y + 27;
@@ -330,6 +329,8 @@ impl Application for DoomApp {
 
         let vp_x = client_x + ((client_w as isize - disp_w as isize) / 2).max(0);
         let vp_y = vp_top + ((vp_avail_h as isize - disp_h as isize) / 2).max(0);
+
+        fb.draw_bevel_sunken(vp_x - 2, vp_y - 2, disp_w + 4, disp_h + 4);
 
         if let Some(engine) = &self.engine {
             let rgba = engine.framebuffer();
@@ -458,10 +459,9 @@ impl Application for DoomApp {
     }
 }
 
-fn draw_button(fb: &mut Framebuffer, x: isize, y: isize, w: usize, h: usize, label: &str, border: Color) {
-    fb.fill_rect(x, y, w, h, Color::from_rgb(30, 41, 59));
-    fb.draw_rect(x, y, w, h, border);
+fn draw_button(fb: &mut Framebuffer, x: isize, y: isize, w: usize, h: usize, label: &str, _border: Color) {
+    fb.draw_button(x, y, w, h, false);
     let lx = x + (w as isize - (label.len() * 8) as isize) / 2;
-    let ly = y + (h as isize - 10) / 2;
-    fb.draw_string(lx, ly, label, Color::from_rgb(241, 245, 249));
+    let ly = y + (h as isize - 8) / 2;
+    fb.draw_string(lx, ly, label, Color::BLACK);
 }

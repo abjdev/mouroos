@@ -142,6 +142,161 @@ impl Framebuffer {
         self.fill_rect(x + w as isize, y + 4, blur, h + blur, shadow_color);
     }
 
+    /// Fast horizontal gradient (used for authentic Windows 98 titlebars)
+    pub fn draw_gradient_h(
+        &mut self,
+        x: isize,
+        y: isize,
+        w: usize,
+        h: usize,
+        left_color: Color,
+        right_color: Color,
+    ) {
+        if w == 0 || h == 0 {
+            return;
+        }
+
+        // Precompute the gradient scanline row (up to 1024 width)
+        let mut row_buf = [0u32; 1024];
+        let clamped_w = w.min(1024);
+        for col in 0..clamped_w {
+            let t = ((col * 256) / clamped_w.max(1)) as u16;
+            row_buf[col] = left_color.lerp(right_color, t).raw;
+        }
+
+        let min_bound_x = if let Some((cx1, _, _, _)) = self.clip { cx1 } else { 0 };
+        let min_bound_y = if let Some((_, cy1, _, _)) = self.clip { cy1 } else { 0 };
+        let max_bound_x = if let Some((_, _, cx2, _)) = self.clip { cx2 } else { self.width as isize };
+        let max_bound_y = if let Some((_, _, _, cy2)) = self.clip { cy2 } else { self.height as isize };
+
+        let y1 = y.max(min_bound_y) as usize;
+        let y2 = ((y + h as isize).min(max_bound_y)).max(min_bound_y) as usize;
+
+        for curr_y in y1..y2 {
+            for col in 0..clamped_w {
+                let px = x + col as isize;
+                if px >= min_bound_x && px < max_bound_x && curr_y < self.height {
+                    let idx = curr_y * self.width + px as usize;
+                    self.backbuffer[idx] = row_buf[col];
+                }
+            }
+        }
+    }
+
+    /// Standard 2px 3D Raised Bevel (Windows 98 / Mac OS 9 Classic)
+    pub fn draw_bevel_raised(&mut self, x: isize, y: isize, w: usize, h: usize) {
+        if w < 2 || h < 2 {
+            return;
+        }
+        let iw = w as isize;
+        let ih = h as isize;
+
+        // Outer Top & Left: White (#FFFFFF)
+        self.fill_rect(x, y, w, 1, Color::RETRO_LIGHT);
+        self.fill_rect(x, y, 1, h, Color::RETRO_LIGHT);
+
+        // Inner Top & Left: Light Gray (#DFDFDF)
+        self.fill_rect(x + 1, y + 1, w.saturating_sub(2), 1, Color::RETRO_HIGHLIGHT);
+        self.fill_rect(x + 1, y + 1, 1, h.saturating_sub(2), Color::RETRO_HIGHLIGHT);
+
+        // Inner Bottom & Right: Dark Gray (#808080)
+        self.fill_rect(x + 1, y + ih - 2, w.saturating_sub(2), 1, Color::RETRO_SHADOW);
+        self.fill_rect(x + iw - 2, y + 1, 1, h.saturating_sub(2), Color::RETRO_SHADOW);
+
+        // Outer Bottom & Right: Black (#000000)
+        self.fill_rect(x, y + ih - 1, w, 1, Color::RETRO_DARK_SHADOW);
+        self.fill_rect(x + iw - 1, y, 1, h, Color::RETRO_DARK_SHADOW);
+    }
+
+    /// Standard 2px 3D Sunken Bevel (recessed input fields, client area, sunken displays)
+    pub fn draw_bevel_sunken(&mut self, x: isize, y: isize, w: usize, h: usize) {
+        if w < 2 || h < 2 {
+            return;
+        }
+        let iw = w as isize;
+        let ih = h as isize;
+
+        // Outer Top & Left: Dark Gray (#808080)
+        self.fill_rect(x, y, w, 1, Color::RETRO_SHADOW);
+        self.fill_rect(x, y, 1, h, Color::RETRO_SHADOW);
+
+        // Inner Top & Left: Black (#000000)
+        self.fill_rect(x + 1, y + 1, w.saturating_sub(2), 1, Color::RETRO_DARK_SHADOW);
+        self.fill_rect(x + 1, y + 1, 1, h.saturating_sub(2), Color::RETRO_DARK_SHADOW);
+
+        // Inner Bottom & Right: Light Gray (#DFDFDF)
+        self.fill_rect(x + 1, y + ih - 2, w.saturating_sub(2), 1, Color::RETRO_HIGHLIGHT);
+        self.fill_rect(x + iw - 2, y + 1, 1, h.saturating_sub(2), Color::RETRO_HIGHLIGHT);
+
+        // Outer Bottom & Right: White (#FFFFFF)
+        self.fill_rect(x, y + ih - 1, w, 1, Color::RETRO_LIGHT);
+        self.fill_rect(x + iw - 1, y, 1, h, Color::RETRO_LIGHT);
+    }
+
+    /// 1px Sunken Panel / Inset Box (status bar panels, system tray, progress bar trough)
+    pub fn draw_sunken_panel(&mut self, x: isize, y: isize, w: usize, h: usize) {
+        if w == 0 || h == 0 {
+            return;
+        }
+        let iw = w as isize;
+        let ih = h as isize;
+        self.fill_rect(x, y, w, 1, Color::RETRO_SHADOW);
+        self.fill_rect(x, y, 1, h, Color::RETRO_SHADOW);
+        self.fill_rect(x, y + ih - 1, w, 1, Color::RETRO_LIGHT);
+        self.fill_rect(x + iw - 1, y, 1, h, Color::RETRO_LIGHT);
+    }
+
+    /// 1px Raised Panel
+    pub fn draw_raised_panel(&mut self, x: isize, y: isize, w: usize, h: usize) {
+        if w == 0 || h == 0 {
+            return;
+        }
+        let iw = w as isize;
+        let ih = h as isize;
+        self.fill_rect(x, y, w, 1, Color::RETRO_LIGHT);
+        self.fill_rect(x, y, 1, h, Color::RETRO_LIGHT);
+        self.fill_rect(x, y + ih - 1, w, 1, Color::RETRO_SHADOW);
+        self.fill_rect(x + iw - 1, y, 1, h, Color::RETRO_SHADOW);
+    }
+
+    /// Classic 3D Button (Raised or Pressed/Sunken) with gray face
+    pub fn draw_button(&mut self, x: isize, y: isize, w: usize, h: usize, pressed: bool) {
+        self.fill_rect(x, y, w, h, Color::RETRO_FACE);
+        if pressed {
+            let iw = w as isize;
+            let ih = h as isize;
+            // Pressed button has outer dark border and inner shadow
+            self.fill_rect(x, y, w, 1, Color::RETRO_DARK_SHADOW);
+            self.fill_rect(x, y, 1, h, Color::RETRO_DARK_SHADOW);
+            self.fill_rect(x + 1, y + 1, w.saturating_sub(2), 1, Color::RETRO_SHADOW);
+            self.fill_rect(x + 1, y + 1, 1, h.saturating_sub(2), Color::RETRO_SHADOW);
+            self.fill_rect(x + 1, y + ih - 1, w.saturating_sub(1), 1, Color::RETRO_HIGHLIGHT);
+            self.fill_rect(x + iw - 1, y + 1, 1, h.saturating_sub(1), Color::RETRO_HIGHLIGHT);
+        } else {
+            self.draw_bevel_raised(x, y, w, h);
+        }
+    }
+
+    /// Classic Etched Divider / Groove (for group boxes, menus, dialog dividers)
+    pub fn draw_groove(&mut self, x: isize, y: isize, w: usize, h: usize) {
+        if w == 0 || h == 0 {
+            return;
+        }
+        if h <= 2 {
+            // Horizontal line groove
+            self.fill_rect(x, y, w, 1, Color::RETRO_SHADOW);
+            self.fill_rect(x, y + 1, w, 1, Color::RETRO_LIGHT);
+        } else if w <= 2 {
+            // Vertical line groove
+            self.fill_rect(x, y, 1, h, Color::RETRO_SHADOW);
+            self.fill_rect(x + 1, y, 1, h, Color::RETRO_LIGHT);
+        } else {
+            // Box groove
+            self.draw_rect(x, y, w, h, Color::RETRO_SHADOW);
+            self.draw_rect(x + 1, y + 1, w.saturating_sub(2), h.saturating_sub(2), Color::RETRO_LIGHT);
+        }
+    }
+
     pub fn draw_char(&mut self, x: isize, y: isize, c: char, color: Color) {
         // Fast path: fully within screen bounds and no clipping active
         if self.clip.is_none()

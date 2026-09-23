@@ -53,46 +53,48 @@ impl Application for NotepadApp {
         client_w: usize,
         client_h: usize,
     ) {
-        // Crisp notepad background
-        fb.fill_rect(client_x, client_y, client_w, client_h, Color::from_rgb(24, 28, 38));
+        let status_h = 18;
+        let text_h = client_h.saturating_sub(status_h);
 
-        // Line number gutter background
-        let gutter_width = 36;
-        fb.fill_rect(client_x, client_y, gutter_width, client_h, Color::from_rgb(18, 22, 30));
-        fb.fill_rect(client_x + gutter_width as isize - 1, client_y, 1, client_h, Color::from_rgb(51, 65, 85));
+        // Windows 98 Notepad pure white canvas
+        fb.fill_rect(client_x, client_y, client_w, text_h, Color::WHITE);
 
-        let line_height = FONT_HEIGHT as isize + 4;
-        let padding_y = 8;
+        let line_height = FONT_HEIGHT as isize + 2;
+        let padding_y = 4;
         let mut y = client_y + padding_y;
-        let max_chars = client_w.saturating_sub(gutter_width + 16) / FONT_WIDTH;
+        let max_chars = client_w.saturating_sub(12) / FONT_WIDTH;
 
         for (idx, line) in self.lines.iter().enumerate() {
-            if y + line_height > client_y + client_h as isize {
+            if y + line_height > client_y + text_h as isize {
                 break;
             }
 
-            // Gutter line number
-            let line_num = format!("{:2}", idx + 1);
-            fb.draw_string(client_x + 8, y, &line_num, Color::from_rgb(100, 116, 139));
-
-            // Line content
-            let text_x = client_x + gutter_width as isize + 8;
+            // Line content in crisp black font
+            let text_x = client_x + 6;
             let display_text = if line.len() > max_chars {
                 let end = line.char_indices().nth(max_chars).map(|(i, _)| i).unwrap_or(line.len());
                 &line[..end]
             } else {
                 line.as_str()
             };
-            fb.draw_string(text_x, y, display_text, Color::from_rgb(241, 245, 249));
+            fb.draw_string(text_x, y, display_text, Color::BLACK);
 
-            // Render cursor
+            // Render classic Windows 98 black vertical bar cursor
             if idx == self.cursor_row && self.cursor_visible && self.cursor_col <= max_chars {
                 let cur_x = text_x + (self.cursor_col * FONT_WIDTH) as isize;
-                fb.fill_rect(cur_x, y, 2, FONT_HEIGHT, Color::from_rgb(96, 165, 250));
+                fb.fill_rect(cur_x, y, 1, FONT_HEIGHT, Color::BLACK);
             }
 
             y += line_height;
         }
+
+        // Status bar at bottom (#C0C0C0 with sunken panel)
+        let status_y = client_y + text_h as isize;
+        fb.fill_rect(client_x, status_y, client_w, status_h, Color::RETRO_FACE);
+        fb.fill_rect(client_x, status_y, client_w, 1, Color::RETRO_LIGHT);
+        fb.draw_sunken_panel(client_x + client_w as isize - 110, status_y + 2, 106, 14);
+        let status_str = format!("Ln {}, Col {}", self.cursor_row + 1, self.cursor_col + 1);
+        fb.draw_string(client_x + client_w as isize - 104, status_y + 5, &status_str, Color::BLACK);
     }
 
     fn on_key(&mut self, key: DecodedKey) {
