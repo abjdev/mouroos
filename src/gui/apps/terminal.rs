@@ -400,7 +400,7 @@ impl Application for TerminalApp {
         // Classic DOS Pitch Black CRT background
         fb.fill_rect(client_x, client_y, client_w, client_h, Color::BLACK);
 
-        let line_height = FONT_HEIGHT as isize + 4;
+        let line_height = FONT_HEIGHT as isize + 2;
         let padding = 8;
         let max_visible_lines = ((client_h as isize - padding * 2) / line_height).max(1) as usize;
 

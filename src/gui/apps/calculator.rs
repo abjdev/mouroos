@@ -146,7 +146,7 @@ impl Application for CalculatorApp {
         let num_str = &self.display;
         let text_width = num_str.len() * (FONT_WIDTH * 2);
         let text_x = (disp_x + display_width as isize - 10 - text_width as isize).max(disp_x + 6);
-        let text_y = disp_y + 10;
+        let text_y = disp_y + 2;
         fb.draw_string_scaled(text_x, text_y, num_str, 2, Color::BLACK);
 
         // 4x4 Button Grid (Windows 98 3D Beveled Buttons)

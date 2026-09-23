@@ -554,7 +554,7 @@ impl Desktop {
 
         // Bold "Start" text
         let text_x = 3 + 9 + start_off;
-        let text_y = taskbar_y + 7 + start_off;
+        let text_y = taskbar_y + 6 + start_off;
         self.fb.draw_string(text_x, text_y, "Start", Color::BLACK);
         self.fb.draw_string(text_x + 1, text_y, "Start", Color::BLACK); // Bold
 
@@ -583,7 +583,7 @@ impl Desktop {
 
             // Tab 16x16 icon
             let icon = Self::icon_from_title(win.app.title());
-            icons::draw_icon_16(&mut self.fb, tab_x + 4 + toff, taskbar_y + 4 + toff, icon);
+            icons::draw_icon_16(&mut self.fb, tab_x + 4 + toff, taskbar_y + 3 + toff, icon);
 
             // Tab title
             let title = win.app.title();
@@ -593,7 +593,7 @@ impl Desktop {
             } else {
                 title
             };
-            self.fb.draw_string(tab_x + 22 + toff, taskbar_y + 7 + toff, display_title, Color::BLACK);
+            self.fb.draw_string(tab_x + 22 + toff, taskbar_y + 6 + toff, display_title, Color::BLACK);
 
             tab_x += tab_w + 4;
         }
@@ -619,7 +619,7 @@ impl Desktop {
         // System Tray Clock
         let clock = self.clock_cache;
         let clock_str = format!("{:02}:{:02}:{:02}", clock.hours, clock.minutes, clock.seconds);
-        self.fb.draw_string(tray_x + 22, taskbar_y + 7, &clock_str, Color::BLACK);
+        self.fb.draw_string(tray_x + 22, taskbar_y + 6, &clock_str, Color::BLACK);
 
         // 5. Render Start Menu Popup if open (Windows 98 Style)
         if self.start_menu_open {
@@ -696,7 +696,7 @@ impl Desktop {
                     Color::BLACK
                 };
 
-                self.fb.draw_string(ix + 26, iy + 7, name, text_color);
+                self.fb.draw_string(ix + 26, iy + 4, name, text_color);
 
                 // Groove separator before Shut Down
                 if i == 9 {

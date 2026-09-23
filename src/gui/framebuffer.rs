@@ -303,7 +303,7 @@ impl Framebuffer {
             && x >= 0
             && (x + 8) <= self.width as isize
             && y >= 0
-            && (y + 8) <= self.height as isize
+            && (y + 16) <= self.height as isize
         {
             let glyph = font::get_glyph(c);
             let raw_color = color.raw;

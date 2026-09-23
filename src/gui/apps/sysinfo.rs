@@ -89,7 +89,7 @@ impl Application for SysInfoApp {
                 value,
                 Color::from_rgb(0, 0, 128), // Classic deep navy specs text
             );
-            y += FONT_HEIGHT as isize + 3;
+            y += FONT_HEIGHT as isize + 1;
         }
 
         y += 4;
@@ -106,7 +106,7 @@ impl Application for SysInfoApp {
         };
         let mem_label = format!("Heap Allocation: {}%", heap_pct);
         fb.draw_string(client_x + padding, y, &mem_label, Color::BLACK);
-        y += FONT_HEIGHT as isize + 3;
+        y += FONT_HEIGHT as isize + 1;
 
         let bar_width = client_w.saturating_sub(padding as usize * 2);
         let bar_height = 14;

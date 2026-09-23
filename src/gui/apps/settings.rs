@@ -99,7 +99,7 @@ impl Application for SettingsApp {
         // Tab body
         fb.fill_rect(tab_x, tab_y, tab_w, tab_h, Color::RETRO_FACE);
         fb.draw_bevel_raised(tab_x, tab_y, tab_w, tab_h + 1);
-        fb.draw_string(tab_x + 10, tab_y + 5, "Themes & Scheme", Color::BLACK);
+        fb.draw_string(tab_x + 10, tab_y + 2, "Themes & Scheme", Color::BLACK);
 
         // Main Tab Sheet Border (Grooved or raised border)
         let sheet_x = bx + 8;
@@ -111,7 +111,7 @@ impl Application for SettingsApp {
         fb.fill_rect(tab_x + 2, sheet_y, tab_w.saturating_sub(4), 1, Color::RETRO_FACE);
 
         // Label inside sheet
-        fb.draw_string(sheet_x + 10, sheet_y + 10, "Select Desktop Theme Scheme:", Color::BLACK);
+        fb.draw_string(sheet_x + 10, sheet_y + 6, "Select Desktop Theme Scheme:", Color::BLACK);
 
         // Sunken Listbox for Themes
         let list_x = sheet_x + 10;
@@ -145,12 +145,12 @@ impl Application for SettingsApp {
             fb.draw_bevel_sunken(list_x + 6, item_y + 4, 12, 12);
 
             let txt_color = if is_sel { Color::WHITE } else { Color::BLACK };
-            fb.draw_string(list_x + 24, item_y + 5, label, txt_color);
+            fb.draw_string(list_x + 24, item_y + 2, label, txt_color);
 
             if is_app {
                 let tag = if is_sel { "(Current)" } else { "[Current]" };
                 let tag_color = if is_sel { Color::WHITE } else { Color::from_rgb(0, 128, 0) };
-                fb.draw_string(list_x + list_w as isize - 76, item_y + 5, tag, tag_color);
+                fb.draw_string(list_x + list_w as isize - 76, item_y + 2, tag, tag_color);
             }
         }
 
@@ -160,13 +160,13 @@ impl Application for SettingsApp {
         // OK Button
         let ok_x = bx + bw as isize - 156;
         fb.draw_button(ok_x, btn_y, 68, 22, false);
-        fb.draw_string(ok_x + 24, btn_y + 6, "OK", Color::BLACK);
+        fb.draw_string(ok_x + 24, btn_y + 3, "OK", Color::BLACK);
 
         // Apply Button
         let apply_x = bx + bw as isize - 80;
         let is_changed = self.selected_theme != self.applied_theme;
         fb.draw_button(apply_x, btn_y, 68, 22, false);
         let apply_color = if is_changed { Color::BLACK } else { Color::RETRO_SHADOW };
-        fb.draw_string(apply_x + 16, btn_y + 6, "Apply", apply_color);
+        fb.draw_string(apply_x + 16, btn_y + 3, "Apply", apply_color);
     }
 }

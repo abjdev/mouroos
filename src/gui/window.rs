@@ -127,9 +127,9 @@ impl Window {
             let title = self.app.title();
             let tw = title.len() * 8 + 12;
             let tx = title_x + (title_w as isize - tw as isize) / 2;
-            fb.fill_rect(tx, title_y + 2, tw, 14, Color::RETRO_MACOS_PLATINUM);
-            fb.draw_bevel_sunken(tx, title_y + 2, tw, 14);
-            fb.draw_string(tx + 6, title_y + 5, title, Color::BLACK);
+            fb.fill_rect(tx, title_y + 1, tw, 16, Color::RETRO_MACOS_PLATINUM);
+            fb.draw_bevel_sunken(tx, title_y + 1, tw, 16);
+            fb.draw_string(tx + 6, title_y + 1, title, Color::BLACK);
         } else {
             // Authentic Windows 98 Horizontal Gradient Titlebar
             let (t_left, t_right) = if self.is_focused {
@@ -150,7 +150,7 @@ impl Window {
             } else {
                 Color::RETRO_HIGHLIGHT
             };
-            fb.draw_string(title_x + 22, title_y + 5, self.app.title(), title_color);
+            fb.draw_string(title_x + 22, title_y + 1, self.app.title(), title_color);
         }
 
         // 4. Square 3D Titlebar Control Buttons

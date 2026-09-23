@@ -53,7 +53,7 @@ impl Application for NotepadApp {
         client_w: usize,
         client_h: usize,
     ) {
-        let status_h = 18;
+        let status_h = 22;
         let text_h = client_h.saturating_sub(status_h);
 
         // Windows 98 Notepad pure white canvas
@@ -92,9 +92,9 @@ impl Application for NotepadApp {
         let status_y = client_y + text_h as isize;
         fb.fill_rect(client_x, status_y, client_w, status_h, Color::RETRO_FACE);
         fb.fill_rect(client_x, status_y, client_w, 1, Color::RETRO_LIGHT);
-        fb.draw_sunken_panel(client_x + client_w as isize - 110, status_y + 2, 106, 14);
+        fb.draw_sunken_panel(client_x + client_w as isize - 110, status_y + 2, 106, 18);
         let status_str = format!("Ln {}, Col {}", self.cursor_row + 1, self.cursor_col + 1);
-        fb.draw_string(client_x + client_w as isize - 104, status_y + 5, &status_str, Color::BLACK);
+        fb.draw_string(client_x + client_w as isize - 104, status_y + 3, &status_str, Color::BLACK);
     }
 
     fn on_key(&mut self, key: DecodedKey) {

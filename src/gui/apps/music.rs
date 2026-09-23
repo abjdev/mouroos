@@ -416,8 +416,8 @@ impl Application for MusicApp {
         // Retro green LCD text
         let lcd_green = Color::from_rgb(52, 211, 153);
         let lcd_amber = Color::from_rgb(251, 191, 36);
-        fb.draw_string(card_x + 8, card_y + 6, disp_title, lcd_green);
-        fb.draw_string(card_x + 8, card_y + 20, disp_artist, Color::from_rgb(148, 163, 184));
+        fb.draw_string(card_x + 8, card_y + 3, disp_title, lcd_green);
+        fb.draw_string(card_x + 8, card_y + 19, disp_artist, Color::from_rgb(148, 163, 184));
 
         let state_str = if speaker::is_muted() {
             "[MUTED]"
@@ -433,7 +433,7 @@ impl Application for MusicApp {
         } else {
             lcd_amber
         };
-        fb.draw_string(card_x + card_w as isize - 76, card_y + 6, state_str, state_col);
+        fb.draw_string(card_x + card_w as isize - 76, card_y + 3, state_str, state_col);
 
         // 2. Stream Information line
         let info_y = by + 52;
@@ -551,7 +551,7 @@ impl Application for MusicApp {
         let list_y = by + 156;
         fb.draw_string(bx + 10, list_y, "Playlist:", Color::BLACK);
 
-        let box_y = list_y + 12;
+        let box_y = list_y + 16;
         let box_h = bh.saturating_sub((box_y - by) as usize + 6);
         let box_w = bw.saturating_sub(16);
         fb.fill_rect(bx + 8, box_y, box_w, box_h, Color::WHITE);
@@ -574,7 +574,7 @@ impl Application for MusicApp {
                         t.info.duration_seconds / 60,
                         t.info.duration_seconds % 60
                     );
-                    fb.draw_string(bx + 14, row_y + 4, &row_txt, name_col);
+                    fb.draw_string(bx + 14, row_y + 1, &row_txt, name_col);
                 }
             }
             PlayerMode::Chiptune => {
@@ -587,7 +587,7 @@ impl Application for MusicApp {
                     }
                     let name_col = if is_cur { Color::WHITE } else { Color::BLACK };
                     let row_txt = format!("{}. {}", i + 1, t.title);
-                    fb.draw_string(bx + 14, row_y + 4, &row_txt, name_col);
+                    fb.draw_string(bx + 14, row_y + 1, &row_txt, name_col);
                 }
             }
         }
@@ -598,6 +598,6 @@ fn draw_button(fb: &mut Framebuffer, x: isize, y: isize, w: usize, h: usize, lab
     fb.draw_button(x, y, w, h, false);
     let lbl_w = label.len() * FONT_WIDTH;
     let lx = x + ((w as isize - lbl_w as isize) / 2);
-    let ly = y + ((h as isize - 8) / 2);
+    let ly = y + ((h as isize - 16) / 2);
     fb.draw_string(lx, ly, label, Color::BLACK);
 }

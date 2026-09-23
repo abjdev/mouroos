@@ -123,7 +123,7 @@ fn render_welcome_frame(fb: &mut Framebuffer, progress: usize, ram_str: &str, he
         Color::RETRO_ACTIVE_TITLE_LEFT,
         Color::RETRO_ACTIVE_TITLE_RIGHT,
     );
-    fb.draw_string(card_x + 10, card_y + 7, "System & Hardware Initialization", Color::WHITE);
+    fb.draw_string(card_x + 10, card_y + 2, "System & Hardware Initialization", Color::WHITE);
 
     let diag_items: [(&str, String); 6] = [
         ("Bootloader", String::from("Mouros In-Tree MBR / Stage 2 / Stage 3 / Stage 4")),
