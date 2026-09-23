@@ -51,7 +51,7 @@ impl Theme {
         match kind {
             ThemeKind::Windows98 => Self {
                 kind,
-                name: "Windows 98 (Memphis)",
+                name: "Classic 98",
                 accent_color: Color::RETRO_SELECTION,
                 win_title_active_top: Color::RETRO_ACTIVE_TITLE_LEFT,
                 win_title_active_bot: Color::RETRO_ACTIVE_TITLE_RIGHT,
@@ -66,7 +66,7 @@ impl Theme {
             },
             ThemeKind::MacOS9 => Self {
                 kind,
-                name: "Mac OS 9 (Platinum)",
+                name: "Classic Platinum",
                 accent_color: Color::from_rgb(0, 0, 128),
                 win_title_active_top: Color::RETRO_MACOS_PLATINUM,
                 win_title_active_bot: Color::from_rgb(180, 180, 180),

@@ -122,8 +122,8 @@ impl Application for SettingsApp {
         fb.draw_bevel_sunken(list_x, list_y, list_w, list_h);
 
         let themes = [
-            (ThemeKind::Windows98, "Windows 98 (Memphis Classic)", Color::RETRO_TEAL),
-            (ThemeKind::MacOS9, "Mac OS 9 (Apple Platinum)", Color::RETRO_MACOS_PLATINUM),
+            (ThemeKind::Windows98, "Classic 98 (Memphis)", Color::RETRO_TEAL),
+            (ThemeKind::MacOS9, "Classic Platinum (Pinstripe)", Color::RETRO_MACOS_PLATINUM),
             (ThemeKind::DeepSpace, "Deep Space (Modern Dark)", Color::from_rgb(56, 189, 248)),
             (ThemeKind::CyberpunkNeon, "Cyberpunk Neon (Synthwave)", Color::from_rgb(244, 63, 94)),
             (ThemeKind::MatrixEmerald, "Matrix Emerald (Green phosphor)", Color::from_rgb(34, 197, 94)),

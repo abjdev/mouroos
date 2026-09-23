@@ -325,14 +325,14 @@ impl Desktop {
 
         // 1. Check Taskbar Clicks
         if ev.y >= taskbar_y {
-            // Start button click: (x: 3..73)
-            if ev.x >= 3 && ev.x <= 73 {
+            // Start button click: (x: 3..61)
+            if ev.x >= 3 && ev.x <= 61 {
                 self.start_menu_open = !self.start_menu_open;
                 return true;
             }
 
             // Taskbar window tabs (dynamically sized)
-            let mut tab_x = 77;
+            let mut tab_x = 65;
             let tray_w = 120;
             let tray_x = (self.fb.width as isize - tray_w - 4).max(100);
             let available_tab_space = (tray_x - tab_x).max(60) as usize;
@@ -546,25 +546,20 @@ impl Desktop {
         self.fb.fill_rect(0, taskbar_y, self.fb.width, 1, Color::RETRO_LIGHT);
         self.fb.fill_rect(0, taskbar_y + 1, self.fb.width, 1, Color::RETRO_HIGHLIGHT);
 
-        // Start Menu Button
+        // Start Menu Button (without Microsoft logo)
         let start_pressed = self.start_menu_open;
         let start_off = if start_pressed { 1 } else { 0 };
-        self.fb.draw_button(3, taskbar_y + 3, 70, 22, start_pressed);
+        let start_btn_w = 58;
+        self.fb.draw_button(3, taskbar_y + 3, start_btn_w, 22, start_pressed);
 
-        // 4-color retro logo (red, green, blue, yellow squares)
-        let flag_x = 7 + start_off;
-        let flag_y = taskbar_y + 6 + start_off;
-        self.fb.fill_rect(flag_x, flag_y, 4, 4, Color::from_rgb(239, 68, 68)); // Red
-        self.fb.fill_rect(flag_x + 5, flag_y, 4, 4, Color::from_rgb(34, 197, 94)); // Green
-        self.fb.fill_rect(flag_x, flag_y + 5, 4, 4, Color::from_rgb(59, 130, 246)); // Blue
-        self.fb.fill_rect(flag_x + 5, flag_y + 5, 4, 4, Color::from_rgb(234, 179, 8)); // Yellow
-
-        // Start text
-        self.fb.draw_string(flag_x + 14, taskbar_y + 7 + start_off, "Start", Color::BLACK);
-        self.fb.draw_string(flag_x + 15, taskbar_y + 7 + start_off, "Start", Color::BLACK); // Bold
+        // Bold "Start" text
+        let text_x = 3 + 9 + start_off;
+        let text_y = taskbar_y + 7 + start_off;
+        self.fb.draw_string(text_x, text_y, "Start", Color::BLACK);
+        self.fb.draw_string(text_x + 1, text_y, "Start", Color::BLACK); // Bold
 
         // Window Tabs on Taskbar
-        let mut tab_x = 78;
+        let mut tab_x = 65;
         let tray_w = 120;
         let tray_x = (self.fb.width as isize - tray_w - 4).max(100);
         let available_tab_space = (tray_x - tab_x).max(60) as usize;
@@ -719,7 +714,7 @@ impl Desktop {
     }
 
     fn icon_from_title(title: &str) -> icons::AppIcon {
-        if title.contains("Terminal") {
+        if title.contains("Terminal") || title.contains("Command") {
             icons::AppIcon::Terminal
         } else if title.contains("System") || title.contains("SysInfo") {
             icons::AppIcon::SysInfo

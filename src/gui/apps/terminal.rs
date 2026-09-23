@@ -154,10 +154,12 @@ impl TerminalApp {
                 if args.is_empty() {
                     let cur = crate::gui::theme::current_theme();
                     self.lines.push(format!("Current theme: {:?}", cur));
-                    self.lines.push(String::from("Available themes: deepspace, cyberpunk, matrix, sunset"));
+                    self.lines.push(String::from("Available themes: classic, platinum, deepspace, cyberpunk, matrix, sunset"));
                     self.lines.push(String::from("Usage: theme <name>"));
                 } else {
                     let t = match args[0] {
+                        "classic" | "memphis" | "retro98" => Some(crate::gui::theme::ThemeKind::Windows98),
+                        "platinum" | "pinstripe" => Some(crate::gui::theme::ThemeKind::MacOS9),
                         "deepspace" | "default" => Some(crate::gui::theme::ThemeKind::DeepSpace),
                         "cyberpunk" | "neon" => Some(crate::gui::theme::ThemeKind::CyberpunkNeon),
                         "matrix" | "emerald" => Some(crate::gui::theme::ThemeKind::MatrixEmerald),
@@ -168,7 +170,7 @@ impl TerminalApp {
                         crate::gui::theme::set_theme(kind);
                         self.lines.push(format!("Theme updated to: {:?}", kind));
                     } else {
-                        self.lines.push(format!("Unknown theme: '{}'. Options: deepspace, cyberpunk, matrix, sunset", args[0]));
+                        self.lines.push(format!("Unknown theme: '{}'. Options: classic, platinum, deepspace, cyberpunk, matrix, sunset", args[0]));
                     }
                 }
             }
@@ -384,7 +386,7 @@ impl TerminalApp {
 
 impl Application for TerminalApp {
     fn title(&self) -> &str {
-        "MS-DOS Command Prompt"
+        "Command Prompt"
     }
 
     fn render(
