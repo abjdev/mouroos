@@ -3,8 +3,8 @@ use super::super::framebuffer::Framebuffer;
 use super::super::window::Application;
 use alloc::format;
 use alloc::string::String;
-use neurodoom::{Button, ClassicEngine, PeerId, PlayerAction, SCREENHEIGHT, SCREENWIDTH};
-use pc_keyboard::{DecodedKey, KeyCode};
+use neurodoom::{Button, Buttons, ClassicEngine, PeerId, PlayerAction, SCREENHEIGHT, SCREENWIDTH};
+use pc_keyboard::{DecodedKey, KeyCode, KeyEvent, KeyState};
 
 pub static DOOM_WAD: &[u8] = include_bytes!("../../../samples/doom/doom1.wad");
 
@@ -20,13 +20,25 @@ pub struct DoomApp {
     show_help: bool,
     tick_acc: usize,
 
-    // Input impulses for smooth play
-    forward_impulse: u8,
-    forward_val: i8,
-    side_impulse: u8,
-    side_val: i8,
-    turn_impulse: u8,
-    turn_val: i16,
+    // Active held key states for multi-key simultaneous gameplay
+    pub key_forward: bool,
+    pub key_backward: bool,
+    pub key_turn_left: bool,
+    pub key_turn_right: bool,
+    pub key_strafe_left: bool,
+    pub key_strafe_right: bool,
+    pub key_attack: bool,
+    pub key_use: bool,
+    pub key_shift: bool,
+
+    // Debounce flags for single-press toggles
+    pub key_m: bool,
+    pub key_p: bool,
+    pub key_r: bool,
+    pub key_h: bool,
+    pub key_z: bool,
+
+    // Mouse impulse & weapon selection
     attack_impulse: u8,
     use_impulse: u8,
     weapon_select: u8,
@@ -59,12 +71,20 @@ impl DoomApp {
             is_paused: false,
             show_help: false,
             tick_acc: 0,
-            forward_impulse: 0,
-            forward_val: 0,
-            side_impulse: 0,
-            side_val: 0,
-            turn_impulse: 0,
-            turn_val: 0,
+            key_forward: false,
+            key_backward: false,
+            key_turn_left: false,
+            key_turn_right: false,
+            key_strafe_left: false,
+            key_strafe_right: false,
+            key_attack: false,
+            key_use: false,
+            key_shift: false,
+            key_m: false,
+            key_p: false,
+            key_r: false,
+            key_h: false,
+            key_z: false,
             attack_impulse: 0,
             use_impulse: 0,
             weapon_select: 0,
@@ -73,6 +93,25 @@ impl DoomApp {
             fps_timer: 0,
             status_msg: None,
         }
+    }
+
+    pub fn clear_inputs(&mut self) {
+        self.key_forward = false;
+        self.key_backward = false;
+        self.key_turn_left = false;
+        self.key_turn_right = false;
+        self.key_strafe_left = false;
+        self.key_strafe_right = false;
+        self.key_attack = false;
+        self.key_use = false;
+        self.key_shift = false;
+        self.key_m = false;
+        self.key_p = false;
+        self.key_r = false;
+        self.key_h = false;
+        self.key_z = false;
+        self.attack_impulse = 0;
+        self.use_impulse = 0;
     }
 
     pub fn load_map(&mut self, map_name: &str) {
@@ -107,28 +146,54 @@ impl DoomApp {
             return;
         }
 
-        let mut action = PlayerAction::default();
+        let speed: i8 = if self.key_shift { 50 } else { 35 };
+        let strafe_speed: i8 = if self.key_shift { 40 } else { 30 };
+        let turn_speed: i16 = if self.key_shift { 1200 } else { 900 };
 
-        if self.forward_impulse > 0 {
-            action.forward_move = self.forward_val;
-            self.forward_impulse -= 1;
+        let mut forward_move: i8 = 0;
+        if self.key_forward {
+            forward_move = forward_move.saturating_add(speed);
         }
-        if self.side_impulse > 0 {
-            action.side_move = self.side_val;
-            self.side_impulse -= 1;
+        if self.key_backward {
+            forward_move = forward_move.saturating_sub(speed);
         }
-        if self.turn_impulse > 0 {
-            action.angle_turn = self.turn_val;
-            self.turn_impulse -= 1;
+
+        let mut side_move: i8 = 0;
+        if self.key_strafe_right {
+            side_move = side_move.saturating_add(strafe_speed);
         }
-        if self.attack_impulse > 0 {
-            action.buttons |= Button::Attack;
-            self.attack_impulse -= 1;
+        if self.key_strafe_left {
+            side_move = side_move.saturating_sub(strafe_speed);
         }
-        if self.use_impulse > 0 {
-            action.buttons |= Button::Use;
-            self.use_impulse -= 1;
+
+        let mut angle_turn: i16 = 0;
+        if self.key_turn_left {
+            angle_turn = angle_turn.saturating_add(turn_speed);
         }
+        if self.key_turn_right {
+            angle_turn = angle_turn.saturating_sub(turn_speed);
+        }
+
+        let mut buttons = Buttons::empty();
+        if self.key_attack || self.attack_impulse > 0 {
+            buttons |= Button::Attack;
+            if self.attack_impulse > 0 {
+                self.attack_impulse -= 1;
+            }
+        }
+        if self.key_use || self.use_impulse > 0 {
+            buttons |= Button::Use;
+            if self.use_impulse > 0 {
+                self.use_impulse -= 1;
+            }
+        }
+
+        let mut action = PlayerAction::default();
+        action.forward_move = forward_move;
+        action.side_move = side_move;
+        action.angle_turn = angle_turn;
+        action.buttons = buttons;
+
         if self.weapon_select > 0 {
             action.weapon_select = self.weapon_select;
             self.weapon_select = 0;
@@ -161,82 +226,69 @@ impl Application for DoomApp {
         "DOOM (1993) - E1 Shareware"
     }
 
-    fn on_key(&mut self, key: DecodedKey) {
-        match key {
-            DecodedKey::RawKey(code) => match code {
-                KeyCode::ArrowUp => {
-                    self.forward_val = 35;
-                    self.forward_impulse = 5;
-                }
-                KeyCode::ArrowDown => {
-                    self.forward_val = -35;
-                    self.forward_impulse = 5;
-                }
-                KeyCode::ArrowLeft => {
-                    self.turn_val = 900;
-                    self.turn_impulse = 5;
-                }
-                KeyCode::ArrowRight => {
-                    self.turn_val = -900;
-                    self.turn_impulse = 5;
-                }
-                KeyCode::LControl | KeyCode::RControl => {
-                    self.attack_impulse = 3;
-                }
-                _ => {}
-            },
-            DecodedKey::Unicode(c) => match c {
-                'w' | 'W' => {
-                    self.forward_val = 35;
-                    self.forward_impulse = 5;
-                }
-                's' | 'S' => {
-                    self.forward_val = -35;
-                    self.forward_impulse = 5;
-                }
-                'a' | 'A' => {
-                    self.turn_val = 900;
-                    self.turn_impulse = 5;
-                }
-                'd' | 'D' => {
-                    self.turn_val = -900;
-                    self.turn_impulse = 5;
-                }
-                'q' | 'Q' | ',' | '<' => {
-                    self.side_val = -35;
-                    self.side_impulse = 5;
-                }
-                'e' | 'E' | '.' | '>' => {
-                    self.side_val = 35;
-                    self.side_impulse = 5;
-                }
-                ' ' | '\n' => {
-                    self.use_impulse = 3;
-                }
-                'f' | 'F' => {
-                    self.attack_impulse = 3;
-                }
-                '1'..='7' => {
-                    self.weapon_select = (c as u8).saturating_sub(b'0');
-                }
-                'm' | 'M' => {
+    fn on_blur(&mut self) {
+        self.clear_inputs();
+    }
+
+    fn on_raw_key(&mut self, event: KeyEvent) {
+        let is_down = matches!(event.state, KeyState::Down | KeyState::SingleShot);
+
+        match event.code {
+            KeyCode::W | KeyCode::ArrowUp => self.key_forward = is_down,
+            KeyCode::S | KeyCode::ArrowDown => self.key_backward = is_down,
+            KeyCode::A | KeyCode::ArrowLeft => self.key_turn_left = is_down,
+            KeyCode::D | KeyCode::ArrowRight => self.key_turn_right = is_down,
+            KeyCode::Q | KeyCode::OemComma => self.key_strafe_left = is_down,
+            KeyCode::E | KeyCode::OemPeriod => self.key_strafe_right = is_down,
+            KeyCode::F | KeyCode::LControl | KeyCode::RControl => self.key_attack = is_down,
+            KeyCode::Spacebar | KeyCode::Return => self.key_use = is_down,
+            KeyCode::LShift | KeyCode::RShift => self.key_shift = is_down,
+
+            KeyCode::M => {
+                if is_down && !self.key_m {
                     self.next_map();
                 }
-                'p' | 'P' => {
+                self.key_m = is_down;
+            }
+            KeyCode::P => {
+                if is_down && !self.key_p {
                     self.is_paused = !self.is_paused;
                 }
-                'r' | 'R' => {
+                self.key_p = is_down;
+            }
+            KeyCode::R => {
+                if is_down && !self.key_r {
                     self.restart_map();
                 }
-                'h' | 'H' => {
+                self.key_r = is_down;
+            }
+            KeyCode::H => {
+                if is_down && !self.key_h {
                     self.show_help = !self.show_help;
                 }
-                'z' | 'Z' => {
+                self.key_h = is_down;
+            }
+            KeyCode::Z => {
+                if is_down && !self.key_z {
                     self.scale = if self.scale == 2 { 1 } else { 2 };
                 }
-                _ => {}
-            },
+                self.key_z = is_down;
+            }
+
+            KeyCode::Key1 => { if is_down { self.weapon_select = 1; } }
+            KeyCode::Key2 => { if is_down { self.weapon_select = 2; } }
+            KeyCode::Key3 => { if is_down { self.weapon_select = 3; } }
+            KeyCode::Key4 => { if is_down { self.weapon_select = 4; } }
+            KeyCode::Key5 => { if is_down { self.weapon_select = 5; } }
+            KeyCode::Key6 => { if is_down { self.weapon_select = 6; } }
+            KeyCode::Key7 => { if is_down { self.weapon_select = 7; } }
+
+            _ => {}
         }
+    }
+
+    fn on_key(&mut self, _key: DecodedKey) {
+        // Raw key handling in on_raw_key provides multi-key state tracking
     }
 
     fn on_mouse_click(&mut self, local_x: isize, local_y: isize, left: bool) {
@@ -424,7 +476,7 @@ impl Application for DoomApp {
 
         if self.show_help {
             let hw = 380;
-            let hh = 250;
+            let hh = 265;
             let hx = client_x + (client_w as isize - hw) / 2;
             let hy = vp_y + (disp_h as isize - hh) / 2;
 
@@ -440,6 +492,7 @@ impl Application for DoomApp {
                 ("Move Backward", "S  or  Down Arrow"),
                 ("Turn Left / Right", "A / D  or  Left / Right"),
                 ("Strafe Left / Right", "Q / E  or  , / ."),
+                ("Run / Sprint", "Shift (hold)"),
                 ("Attack / Fire", "F  or  Ctrl  or  Left Click"),
                 ("Use / Open / Switch", "Space  or  Enter"),
                 ("Select Weapon (1-7)", "Number keys 1 to 7"),
@@ -464,4 +517,74 @@ fn draw_button(fb: &mut Framebuffer, x: isize, y: isize, w: usize, h: usize, lab
     let lx = x + (w as isize - (label.len() * 8) as isize) / 2;
     let ly = y + (h as isize - 8) / 2;
     fb.draw_string(lx, ly, label, Color::BLACK);
+}
+
+#[test_case]
+fn test_doom_multi_input() {
+    let mut app = DoomApp::new();
+
+    // 1. Press W (Forward)
+    app.on_raw_key(KeyEvent {
+        code: KeyCode::W,
+        state: KeyState::Down,
+    });
+    assert!(app.key_forward);
+    assert!(!app.key_turn_right);
+    assert!(!app.key_attack);
+
+    // 2. While holding W, press D (Turn Right)
+    app.on_raw_key(KeyEvent {
+        code: KeyCode::D,
+        state: KeyState::Down,
+    });
+    assert!(app.key_forward);
+    assert!(app.key_turn_right);
+    assert!(!app.key_attack);
+
+    // 3. While holding W and D, press F (Fire / Attack)
+    app.on_raw_key(KeyEvent {
+        code: KeyCode::F,
+        state: KeyState::Down,
+    });
+    assert!(app.key_forward);
+    assert!(app.key_turn_right);
+    assert!(app.key_attack);
+
+    // 4. While holding W, D, F, also press Shift (Sprint / Run)
+    app.on_raw_key(KeyEvent {
+        code: KeyCode::LShift,
+        state: KeyState::Down,
+    });
+    assert!(app.key_shift);
+
+    // Step simulation - verify all actions execute together without resetting each other
+    app.step();
+    assert!(app.key_forward);
+    assert!(app.key_turn_right);
+    assert!(app.key_attack);
+    assert!(app.key_shift);
+
+    // 5. Release F (Stop shooting) while still holding W and D
+    app.on_raw_key(KeyEvent {
+        code: KeyCode::F,
+        state: KeyState::Up,
+    });
+    assert!(app.key_forward);
+    assert!(app.key_turn_right);
+    assert!(!app.key_attack);
+
+    // 6. Release D (Stop turning) while still holding W
+    app.on_raw_key(KeyEvent {
+        code: KeyCode::D,
+        state: KeyState::Up,
+    });
+    assert!(app.key_forward);
+    assert!(!app.key_turn_right);
+
+    // 7. Window blur (focus loss) must clear all held keys
+    app.on_blur();
+    assert!(!app.key_forward);
+    assert!(!app.key_turn_right);
+    assert!(!app.key_attack);
+    assert!(!app.key_shift);
 }

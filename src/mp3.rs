@@ -382,6 +382,11 @@ impl Mp3Player {
             return false;
         }
 
+        // Defer decoding if AC97 DMA ring buffer is full so we don't drop frames
+        if crate::drivers::ac97::is_available() && !crate::drivers::ac97::can_write() {
+            return false;
+        }
+
         let track = &self.tracks[self.current_track];
         if self.byte_offset >= track.data.len() {
             // Loop track
@@ -405,16 +410,16 @@ impl Mp3Player {
         self.current_frame += 1;
 
         if let Some(fi) = info {
-            let samples = fi.samples_produced;
-            self.total_samples_decoded += samples;
+            let total_samples = fi.samples_produced * fi.channels.num() as usize;
+            self.total_samples_decoded += fi.samples_produced;
 
-            // Compute peak amplitude, RMS energy, zero-crossing rate, and 16 equalizer bands
+            // Compute peak amplitude, RMS energy, zero-crossing rate across all decoded samples
             let mut sum_sq = 0.0f32;
             let mut peak = 0.0f32;
             let mut zero_crossings = 0usize;
             let mut prev_sign = false;
 
-            for (i, &sample) in self.pcm_buffer[..samples].iter().enumerate() {
+            for (i, &sample) in self.pcm_buffer[..total_samples].iter().enumerate() {
                 let abs_val = if sample < 0.0 { -sample } else { sample };
                 if abs_val > peak {
                     peak = abs_val;
@@ -429,9 +434,9 @@ impl Mp3Player {
             }
 
             self.peak_amplitude = peak;
-            let rms = if samples > 0 {
+            let rms = if total_samples > 0 {
                 // approximate square root without floating point std lib
-                let mean = sum_sq / (samples as f32);
+                let mean = sum_sq / (total_samples as f32);
                 approx_sqrt(mean)
             } else {
                 0.0
@@ -442,13 +447,13 @@ impl Mp3Player {
             let out_samples: usize;
             match fi.channels {
                 Channels::Stereo => {
-                    out_samples = samples.min(nanomp3::MAX_SAMPLES_PER_FRAME);
+                    out_samples = total_samples.min(nanomp3::MAX_SAMPLES_PER_FRAME);
                     for (out, &s) in self.pcm_i16[..out_samples].iter_mut().zip(&self.pcm_buffer[..out_samples]) {
                         *out = (s.clamp(-1.0, 1.0) * 32767.0) as i16;
                     }
                 }
                 Channels::Mono => {
-                    let mono_samples = samples.min(nanomp3::MAX_SAMPLES_PER_FRAME / 2);
+                    let mono_samples = fi.samples_produced.min(nanomp3::MAX_SAMPLES_PER_FRAME / 2);
                     out_samples = mono_samples * 2;
                     for i in 0..mono_samples {
                         let val = (self.pcm_buffer[i].clamp(-1.0, 1.0) * 32767.0) as i16;
@@ -461,14 +466,20 @@ impl Mp3Player {
             // Stream PCM to AC97 PCI DMA if available; otherwise fallback to PC speaker tone
             if crate::drivers::ac97::is_available() {
                 crate::drivers::ac97::set_sample_rate(fi.sample_rate);
-                crate::drivers::ac97::write_pcm_samples(&self.pcm_i16[..out_samples]);
+                let written = crate::drivers::ac97::write_pcm_samples(&self.pcm_i16[..out_samples]);
+                if written == 0 {
+                    // Buffer was unexpectedly full; rewind so this frame is not lost
+                    self.byte_offset -= consumed;
+                    self.current_frame -= 1;
+                    return false;
+                }
                 // Keep PC speaker muted so real PCM digital audio is heard without clash
                 crate::drivers::speaker::mute();
                 self.dominant_freq = fi.sample_rate;
             } else {
                 // Pure PC speaker fallback when running without AC97 PCI device
                 if rms > 0.02 && zero_crossings > 2 {
-                    let freq = ((zero_crossings as u64 * fi.sample_rate as u64) / (2 * samples as u64)) as u32;
+                    let freq = ((zero_crossings as u64 * fi.sample_rate as u64) / (2 * total_samples as u64)) as u32;
                     let clamped_freq = freq.clamp(65, 3000);
                     self.dominant_freq = clamped_freq;
                     crate::drivers::speaker::play_tone(clamped_freq);
@@ -479,11 +490,11 @@ impl Mp3Player {
             }
 
             // Compute 16 Equalizer Spectrum Energy Bands from PCM audio sub-blocks
-            let block_size = samples / 16;
+            let block_size = total_samples / 16;
             if block_size > 0 {
                 for b in 0..16 {
                     let start = b * block_size;
-                    let end = (start + block_size).min(samples);
+                    let end = (start + block_size).min(total_samples);
                     let mut band_energy = 0.0f32;
                     for &s in &self.pcm_buffer[start..end] {
                         let abs_s = if s < 0.0 { -s } else { s };
@@ -512,4 +523,25 @@ fn approx_sqrt(x: f32) -> f32 {
         guess = 0.5 * (guess + x / guess);
     }
     guess
+}
+
+#[test_case]
+fn test_mp3_stereo_sample_count() {
+    let mut player = Mp3Player::new();
+    player.play();
+    assert!(player.is_playing);
+    // Decode until non-silent audio frames (skipping MP3 encoder priming delay)
+    let mut found_audio = false;
+    for _ in 0..15 {
+        if player.step_frame() {
+            let max_first_half = player.pcm_i16[..1152].iter().map(|&s| s.abs()).max().unwrap_or(0);
+            let max_second_half = player.pcm_i16[1152..2304].iter().map(|&s| s.abs()).max().unwrap_or(0);
+            if max_first_half > 0 && max_second_half > 0 {
+                found_audio = true;
+                break;
+            }
+        }
+    }
+    assert!(found_audio);
+    assert!(player.total_samples_decoded >= 1152);
 }

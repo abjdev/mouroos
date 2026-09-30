@@ -204,6 +204,9 @@ impl Desktop {
 
     fn unfocus_all(&mut self) {
         for win in &mut self.windows {
+            if win.is_focused {
+                win.app.on_blur();
+            }
             win.is_focused = false;
         }
     }
@@ -344,6 +347,7 @@ impl Desktop {
                     if self.windows[i].is_focused && !self.windows[i].is_minimized {
                         self.windows[i].is_minimized = true;
                         self.windows[i].is_focused = false;
+                        self.windows[i].app.on_blur();
                     } else {
                         self.focus_window_at_index(i);
                     }
@@ -412,6 +416,7 @@ impl Desktop {
             if self.windows[i].is_over_minimize_button(ev.x, ev.y) {
                 self.windows[i].is_minimized = true;
                 self.windows[i].is_focused = false;
+                self.windows[i].app.on_blur();
                 return true;
             }
 
@@ -462,6 +467,15 @@ impl Desktop {
         }
 
         false
+    }
+
+    pub fn handle_raw_key_event(&mut self, event: pc_keyboard::KeyEvent) {
+        for win in self.windows.iter_mut().rev() {
+            if win.is_focused && !win.is_minimized {
+                win.app.on_raw_key(event);
+                break;
+            }
+        }
     }
 
     pub fn handle_key_event(&mut self, key: DecodedKey) {
@@ -769,6 +783,7 @@ pub async fn run_desktop(mut desktop: Desktop) {
         // 2. Process pending keyboard events non-blockingly
         while let Some(scancode) = crate::task::keyboard::pop_scancode() {
             if let Ok(Some(key_event)) = keyboard.add_byte(scancode) {
+                desktop.handle_raw_key_event(key_event.clone());
                 if let Some(key) = keyboard.process_keyevent(key_event) {
                     desktop.handle_key_event(key);
                     full_render = true;

@@ -19,6 +19,8 @@ pub trait Application: Send {
         client_h: usize,
     );
     fn on_key(&mut self, key: DecodedKey);
+    fn on_raw_key(&mut self, _event: pc_keyboard::KeyEvent) {}
+    fn on_blur(&mut self) {}
     fn on_mouse_click(&mut self, local_x: isize, local_y: isize, left: bool);
     fn on_tick(&mut self) -> bool {
         false
