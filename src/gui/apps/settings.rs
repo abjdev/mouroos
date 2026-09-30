@@ -57,6 +57,11 @@ impl SettingsApp {
     pub fn new() -> Self {
         let cur_theme = theme::current_theme();
         let cur_wp = theme::current_wallpaper();
+        let (cur_w, cur_h) = theme::current_resolution();
+        let cur_res_idx = RESOLUTIONS
+            .iter()
+            .position(|(_, w, h, _)| *w == cur_w && *h == cur_h)
+            .unwrap_or(1);
         let cur_vol = crate::drivers::ac97::get_master_volume();
         let cur_muted = crate::drivers::ac97::is_muted() || crate::drivers::speaker::is_muted();
 
@@ -66,8 +71,8 @@ impl SettingsApp {
             applied_theme: cur_theme,
             selected_wallpaper: cur_wp,
             applied_wallpaper: cur_wp,
-            selected_res_idx: 1, // 800x600 SVGA Native
-            applied_res_idx: 1,
+            selected_res_idx: cur_res_idx,
+            applied_res_idx: cur_res_idx,
             selected_color_depth: 0,
             selected_refresh_rate: 0,
             selected_sound_device: if crate::drivers::ac97::is_available() {
@@ -91,6 +96,10 @@ impl SettingsApp {
         self.applied_res_idx = self.selected_res_idx;
         theme::set_theme(self.selected_theme);
         theme::set_wallpaper(self.selected_wallpaper);
+
+        // Apply display resolution
+        let (_, w, h, _) = RESOLUTIONS[self.selected_res_idx];
+        theme::set_pending_resolution(w, h);
 
         // Apply audio settings
         crate::drivers::ac97::set_master_volume(self.master_volume);
@@ -164,9 +173,12 @@ impl Application for SettingsApp {
                     SettingsTab::Sound => SettingsTab::Themes,
                 };
             }
-            DecodedKey::Unicode('\n') => {
+            DecodedKey::Unicode('\n') | DecodedKey::Unicode('o') | DecodedKey::Unicode('O') => {
                 self.apply_changes();
                 self.should_close = true;
+            }
+            DecodedKey::Unicode('a') | DecodedKey::Unicode('A') => {
+                self.apply_changes();
             }
             DecodedKey::Unicode('\x1b') => {
                 self.revert_changes();

@@ -84,8 +84,8 @@ impl BgaDevice {
             bga_write(VBE_DISPI_INDEX_BANK, 0);
         }
 
-        // Map framebuffer to virtual memory
-        let fb_bytes = width * height * 4;
+        // Map up to 16 MiB of video RAM (standard Bochs VBE VRAM aperture)
+        let vram_bytes = 16 * 1024 * 1024;
         let flags = PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::WRITE_THROUGH;
 
         unsafe {
@@ -94,7 +94,7 @@ impl BgaDevice {
                 frame_allocator,
                 PhysAddr::new(fb_phys),
                 VirtAddr::new(FRAMEBUFFER_VIRT_START),
-                fb_bytes,
+                vram_bytes,
                 flags,
             )
             .map_err(|_| "Failed to map physical framebuffer to virtual memory")?;
@@ -107,6 +107,23 @@ impl BgaDevice {
             framebuffer_ptr: FRAMEBUFFER_VIRT_START as *mut u32,
             phys_addr: fb_phys,
         })
+    }
+
+    /// Dynamically switch BGA display resolution on hardware
+    pub fn set_mode(&mut self, width: usize, height: usize) {
+        unsafe {
+            bga_write(VBE_DISPI_INDEX_ENABLE, VBE_DISPI_DISABLED);
+            bga_write(VBE_DISPI_INDEX_XRES, width as u16);
+            bga_write(VBE_DISPI_INDEX_YRES, height as u16);
+            bga_write(VBE_DISPI_INDEX_BPP, DEFAULT_BPP as u16);
+            bga_write(
+                VBE_DISPI_INDEX_ENABLE,
+                VBE_DISPI_ENABLED | VBE_DISPI_LFB_ENABLED,
+            );
+            bga_write(VBE_DISPI_INDEX_BANK, 0);
+        }
+        self.width = width;
+        self.height = height;
     }
 
     #[inline(always)]

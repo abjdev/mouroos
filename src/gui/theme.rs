@@ -37,6 +37,25 @@ pub fn take_pending_wallpaper() -> Option<WallpaperKind> {
     PENDING_WALLPAPER.lock().take()
 }
 
+static PENDING_RESOLUTION: Mutex<Option<(usize, usize)>> = Mutex::new(None);
+static CURRENT_RESOLUTION: Mutex<(usize, usize)> = Mutex::new((800, 600));
+
+pub fn set_pending_resolution(w: usize, h: usize) {
+    *PENDING_RESOLUTION.lock() = Some((w, h));
+}
+
+pub fn take_pending_resolution() -> Option<(usize, usize)> {
+    PENDING_RESOLUTION.lock().take()
+}
+
+pub fn current_resolution() -> (usize, usize) {
+    *CURRENT_RESOLUTION.lock()
+}
+
+pub fn set_current_resolution(w: usize, h: usize) {
+    *CURRENT_RESOLUTION.lock() = (w, h);
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WallpaperKind {
     ClassicTeal,

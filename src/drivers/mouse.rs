@@ -48,8 +48,10 @@ static PARSER: spin::Mutex<PacketParser> = spin::Mutex::new(PacketParser {
 pub fn set_screen_bounds(width: isize, height: isize) {
     SCREEN_W.store(width, Ordering::Relaxed);
     SCREEN_H.store(height, Ordering::Relaxed);
-    MOUSE_X.store(width / 2, Ordering::Relaxed);
-    MOUSE_Y.store(height / 2, Ordering::Relaxed);
+    let cur_x = MOUSE_X.load(Ordering::Relaxed).clamp(0, (width - 1).max(0));
+    let cur_y = MOUSE_Y.load(Ordering::Relaxed).clamp(0, (height - 1).max(0));
+    MOUSE_X.store(cur_x, Ordering::Relaxed);
+    MOUSE_Y.store(cur_y, Ordering::Relaxed);
 }
 
 pub fn get_mouse_state() -> MouseState {

@@ -26,6 +26,16 @@ impl Framebuffer {
         }
     }
 
+    /// Resize framebuffer, switch hardware BGA mode, and resize backbuffer
+    pub fn resize(&mut self, new_w: usize, new_h: usize) {
+        self.bga.set_mode(new_w, new_h);
+        self.width = new_w;
+        self.height = new_h;
+        let size = new_w * new_h;
+        self.backbuffer.resize(size, 0);
+        self.clip = None;
+    }
+
     pub fn set_clip(&mut self, x: isize, y: isize, w: usize, h: usize) {
         let min_x = x.max(0);
         let min_y = y.max(0);

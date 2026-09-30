@@ -483,8 +483,44 @@ impl Desktop {
         }
     }
 
+    pub fn set_resolution(&mut self, new_w: usize, new_h: usize) {
+        if self.fb.width == new_w && self.fb.height == new_h {
+            return;
+        }
+        crate::gui::theme::set_current_resolution(new_w, new_h);
+        self.fb.resize(new_w, new_h);
+        self.wallpaper = self.theme.render_wallpaper(new_w, new_h);
+        mouse::set_screen_bounds(new_w as isize, new_h as isize);
+        self.cursor_active = false;
+        self.cursor_saved_x = -100;
+        self.cursor_saved_y = -100;
+
+        // Clamp window positions within the new desktop area
+        let taskbar_top = (new_h.saturating_sub(TASKBAR_HEIGHT)) as isize;
+        for win in &mut self.windows {
+            if win.x + 60 > new_w as isize {
+                win.x = (new_w as isize - win.width as isize).max(10);
+            }
+            if win.y + 40 > taskbar_top {
+                win.y = (taskbar_top - win.height as isize).max(10);
+            }
+            if win.x < 0 {
+                win.x = 0;
+            }
+            if win.y < 0 {
+                win.y = 0;
+            }
+        }
+    }
+
     pub fn on_tick(&mut self) -> bool {
         let mut changed = false;
+
+        // Check if resolution change was requested
+        if let Some((new_w, new_h)) = crate::gui::theme::take_pending_resolution() {
+            self.set_resolution(new_w, new_h);
+            changed = true;
+        }
 
         // Check if any window requested closing
         let mut closed_any = false;
@@ -542,6 +578,11 @@ impl Desktop {
     }
 
     pub fn render(&mut self) {
+        // Check if resolution change was requested immediately prior to blitting
+        if let Some((new_w, new_h)) = crate::gui::theme::take_pending_resolution() {
+            self.set_resolution(new_w, new_h);
+        }
+
         // Check if theme or wallpaper was updated immediately prior to blitting
         let mut wp_changed = false;
         if let Some(new_kind) = crate::gui::theme::take_pending_theme() {
