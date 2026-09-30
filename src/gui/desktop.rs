@@ -430,6 +430,9 @@ impl Desktop {
             let local_x = ev.x - cx;
             let local_y = ev.y - cy;
             self.windows[top_idx].app.on_mouse_click(local_x, local_y, true);
+            if self.windows[top_idx].app.should_close() {
+                self.windows.remove(top_idx);
+            }
             return true;
         }
 
@@ -472,16 +475,30 @@ impl Desktop {
     }
 
     pub fn handle_key_event(&mut self, key: DecodedKey) {
-        for win in self.windows.iter_mut().rev() {
-            if win.is_focused && !win.is_minimized {
-                win.app.on_key(key);
-                break;
+        if let Some(pos) = self.windows.iter().rposition(|w| w.is_focused && !w.is_minimized) {
+            self.windows[pos].app.on_key(key);
+            if self.windows[pos].app.should_close() {
+                self.windows.remove(pos);
             }
         }
     }
 
     pub fn on_tick(&mut self) -> bool {
         let mut changed = false;
+
+        // Check if any window requested closing
+        let mut closed_any = false;
+        self.windows.retain(|w| {
+            if w.app.should_close() {
+                closed_any = true;
+                false
+            } else {
+                true
+            }
+        });
+        if closed_any {
+            changed = true;
+        }
 
         // Check if theme or wallpaper was updated
         let mut wp_changed = false;
@@ -525,6 +542,19 @@ impl Desktop {
     }
 
     pub fn render(&mut self) {
+        // Check if theme or wallpaper was updated immediately prior to blitting
+        let mut wp_changed = false;
+        if let Some(new_kind) = crate::gui::theme::take_pending_theme() {
+            self.theme = Theme::get(new_kind);
+            wp_changed = true;
+        }
+        if let Some(_new_wp) = crate::gui::theme::take_pending_wallpaper() {
+            wp_changed = true;
+        }
+        if wp_changed {
+            self.wallpaper = self.theme.render_wallpaper(self.fb.width, self.fb.height);
+        }
+
         // 1. Fast blit pre-rendered wallpaper (memcpy ~0.2ms)
         self.fb.backbuffer.copy_from_slice(&self.wallpaper);
 

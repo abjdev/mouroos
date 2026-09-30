@@ -30,6 +30,7 @@ pub struct SettingsApp {
 
     // Display State
     pub selected_res_idx: usize,
+    pub applied_res_idx: usize,
     pub selected_color_depth: usize,
     pub selected_refresh_rate: usize,
 
@@ -38,6 +39,11 @@ pub struct SettingsApp {
     pub master_volume: u8,
     pub is_muted: bool,
     pub test_sound_timer: u32,
+
+    // Layout cache & Window control
+    pub client_w: usize,
+    pub client_h: usize,
+    pub should_close: bool,
 }
 
 pub const RESOLUTIONS: [(&str, usize, usize, &str); 4] = [
@@ -61,6 +67,7 @@ impl SettingsApp {
             selected_wallpaper: cur_wp,
             applied_wallpaper: cur_wp,
             selected_res_idx: 1, // 800x600 SVGA Native
+            applied_res_idx: 1,
             selected_color_depth: 0,
             selected_refresh_rate: 0,
             selected_sound_device: if crate::drivers::ac97::is_available() {
@@ -71,6 +78,9 @@ impl SettingsApp {
             master_volume: cur_vol,
             is_muted: cur_muted,
             test_sound_timer: 0,
+            client_w: 402,
+            client_h: 304,
+            should_close: false,
         }
     }
 
@@ -78,6 +88,7 @@ impl SettingsApp {
         // Apply theme and wallpaper
         self.applied_theme = self.selected_theme;
         self.applied_wallpaper = self.selected_wallpaper;
+        self.applied_res_idx = self.selected_res_idx;
         theme::set_theme(self.selected_theme);
         theme::set_wallpaper(self.selected_wallpaper);
 
@@ -90,12 +101,17 @@ impl SettingsApp {
     pub fn revert_changes(&mut self) {
         self.selected_theme = self.applied_theme;
         self.selected_wallpaper = self.applied_wallpaper;
+        self.selected_res_idx = self.applied_res_idx;
         self.master_volume = crate::drivers::ac97::get_master_volume();
         self.is_muted = crate::drivers::ac97::is_muted() || crate::drivers::speaker::is_muted();
     }
 
     pub fn has_pending_changes(&self) -> bool {
-        self.selected_theme != self.applied_theme || self.selected_wallpaper != self.applied_wallpaper
+        self.selected_theme != self.applied_theme
+            || self.selected_wallpaper != self.applied_wallpaper
+            || self.selected_res_idx != self.applied_res_idx
+            || self.master_volume != crate::drivers::ac97::get_master_volume()
+            || self.is_muted != (crate::drivers::ac97::is_muted() || crate::drivers::speaker::is_muted())
     }
 
     pub fn trigger_test_sound(&mut self) {
@@ -150,9 +166,11 @@ impl Application for SettingsApp {
             }
             DecodedKey::Unicode('\n') => {
                 self.apply_changes();
+                self.should_close = true;
             }
             DecodedKey::Unicode('\x1b') => {
                 self.revert_changes();
+                self.should_close = true;
             }
             DecodedKey::Unicode(' ') => {
                 if self.active_tab == SettingsTab::Sound {
@@ -225,6 +243,10 @@ impl Application for SettingsApp {
         }
     }
 
+    fn should_close(&self) -> bool {
+        self.should_close
+    }
+
     fn on_mouse_click(&mut self, x: isize, y: isize, left: bool) {
         if !left {
             return;
@@ -244,21 +266,27 @@ impl Application for SettingsApp {
             }
         }
 
-        // 2. Dialog Bottom Action Buttons (y: 300..326)
-        let btn_y = 300isize;
-        if y >= btn_y && y <= btn_y + 26 {
-            // Cancel Button: (x: 174..246)
-            if x >= 174 && x <= 246 {
+        // 2. Dialog Bottom Action Buttons (aligned to self.client_w and self.client_h)
+        let btn_y = self.client_h as isize - 28;
+        if y >= btn_y - 2 && y <= btn_y + 26 {
+            let cancel_x = self.client_w as isize - 232;
+            let ok_x = self.client_w as isize - 156;
+            let apply_x = self.client_w as isize - 80;
+
+            // Cancel Button: (x: cancel_x .. cancel_x + 68)
+            if x >= cancel_x && x <= cancel_x + 68 {
                 self.revert_changes();
+                self.should_close = true;
                 return;
             }
-            // OK Button: (x: 250..322)
-            if x >= 250 && x <= 322 {
+            // OK Button: (x: ok_x .. ok_x + 68)
+            if x >= ok_x && x <= ok_x + 68 {
                 self.apply_changes();
+                self.should_close = true;
                 return;
             }
-            // Apply Button: (x: 326..398)
-            if x >= 326 && x <= 398 {
+            // Apply Button: (x: apply_x .. apply_x + 68)
+            if x >= apply_x && x <= apply_x + 68 {
                 self.apply_changes();
                 return;
             }
@@ -309,17 +337,17 @@ impl Application for SettingsApp {
                     }
                     return;
                 }
-                // [ More ► ]: (x: 312..376, y: 168..194)
-                if x >= 312 && x <= 376 && y >= 168 && y <= 194 {
+                // [ More ► ]: (x: 304..368, y: 168..194)
+                if x >= 304 && x <= 368 && y >= 168 && y <= 194 {
                     if self.selected_res_idx + 1 < RESOLUTIONS.len() {
                         self.selected_res_idx += 1;
                     }
                     return;
                 }
-                // Slider Track Clicks: (x: 96..308, y: 168..194)
-                if x >= 96 && x <= 308 && y >= 168 && y <= 194 {
+                // Slider Track Clicks: (x: 96..300, y: 168..194)
+                if x >= 96 && x <= 300 && y >= 168 && y <= 194 {
                     let rel_x = x - 96;
-                    let idx = ((rel_x * 4) / 208).clamp(0, 3) as usize;
+                    let idx = ((rel_x * 4) / 200).clamp(0, 3) as usize;
                     self.selected_res_idx = idx;
                     return;
                 }
@@ -382,6 +410,9 @@ impl Application for SettingsApp {
         bw: usize,
         bh: usize,
     ) {
+        self.client_w = bw;
+        self.client_h = bh;
+
         // Windows 98 Dialog Body
         fb.fill_rect(bx, by, bw, bh, Color::RETRO_FACE);
 

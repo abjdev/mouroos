@@ -25,6 +25,9 @@ pub trait Application: Send {
     fn on_tick(&mut self) -> bool {
         false
     }
+    fn should_close(&self) -> bool {
+        false
+    }
 }
 
 pub struct Window {
