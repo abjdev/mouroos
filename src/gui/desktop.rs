@@ -91,14 +91,7 @@ impl Desktop {
         desktop.spawn_sysinfo(390, 15, 395, 260);
         desktop.spawn_terminal(280, 290, 505, 265);
         desktop.spawn_music(15, 20, 380, 280);
-        desktop.spawn_settings(155, 20, 380, 260);
-        if let Some(settings) = desktop.windows.last_mut() {
-            settings.is_minimized = true;
-            settings.is_focused = false;
-        }
-        if let Some(music_idx) = desktop.windows.iter().position(|w| w.app.title().contains("MP3") || w.app.title().contains("Music")) {
-            desktop.focus_window_at_index(music_idx);
-        }
+        desktop.spawn_settings(190, 110, 410, 330);
 
         desktop
     }
@@ -378,7 +371,7 @@ impl Desktop {
                         4 => self.spawn_snake(200, 80, 320, 300),
                         5 => self.spawn_music(180, 100, 380, 280),
                         6 => self.spawn_image_viewer(160, 60, 480, 360),
-                        7 => self.spawn_settings(200, 120, 380, 280),
+                        7 => self.spawn_settings(190, 110, 410, 330),
                         8 => self.spawn_elf_runner(160, 80, 520, 360),
                         9 => self.spawn_doom(78, 45, 644, 454),
                         10 => {
@@ -451,7 +444,7 @@ impl Desktop {
                     4 => self.spawn_snake(200, 80, 320, 300),
                     5 => self.spawn_music(180, 100, 380, 280),
                     6 => self.spawn_image_viewer(160, 60, 480, 360),
-                    7 => self.spawn_settings(200, 120, 380, 280),
+                    7 => self.spawn_settings(190, 110, 410, 330),
                     8 => self.spawn_elf_runner(160, 80, 520, 360),
                     9 => self.spawn_doom(78, 45, 644, 454),
                     _ => {}
@@ -490,9 +483,16 @@ impl Desktop {
     pub fn on_tick(&mut self) -> bool {
         let mut changed = false;
 
-        // Check if theme was updated
+        // Check if theme or wallpaper was updated
+        let mut wp_changed = false;
         if let Some(new_kind) = crate::gui::theme::take_pending_theme() {
             self.theme = Theme::get(new_kind);
+            wp_changed = true;
+        }
+        if let Some(_new_wp) = crate::gui::theme::take_pending_wallpaper() {
+            wp_changed = true;
+        }
+        if wp_changed {
             self.wallpaper = self.theme.render_wallpaper(self.fb.width, self.fb.height);
             changed = true;
         }

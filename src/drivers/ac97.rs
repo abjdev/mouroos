@@ -31,7 +31,11 @@ pub struct Ac97Device {
 unsafe impl Send for Ac97Device {}
 unsafe impl Sync for Ac97Device {}
 
+use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+
 static AC97_INSTANCE: Mutex<Option<Ac97Device>> = Mutex::new(None);
+static MASTER_VOLUME: AtomicU8 = AtomicU8::new(85);
+static IS_MUTED: AtomicBool = AtomicBool::new(false);
 
 pub fn find_ac97_device() -> Option<PciDevice> {
     for bus in 0..=1 {
@@ -319,3 +323,77 @@ pub fn stop_playback() {
         dev.is_running = false;
     }
 }
+
+pub fn get_master_volume() -> u8 {
+    MASTER_VOLUME.load(Ordering::Relaxed)
+}
+
+pub fn set_master_volume(vol: u8) {
+    let vol = vol.min(100);
+    MASTER_VOLUME.store(vol, Ordering::Relaxed);
+    update_mixer_volume();
+}
+
+pub fn is_muted() -> bool {
+    IS_MUTED.load(Ordering::Relaxed)
+}
+
+pub fn set_muted(muted: bool) {
+    IS_MUTED.store(muted, Ordering::Relaxed);
+    update_mixer_volume();
+}
+
+fn update_mixer_volume() {
+    let vol = MASTER_VOLUME.load(Ordering::Relaxed);
+    let muted = IS_MUTED.load(Ordering::Relaxed);
+    if let Some(ref dev) = *AC97_INSTANCE.lock() {
+        // Attenuation: 0 (0dB max volume) to 31 (-46.5dB min volume)
+        let att = (((100 - vol as u16) * 31) / 100) as u16;
+        let reg_val = if muted {
+            0x8000 | (att << 8) | att
+        } else {
+            (att << 8) | att
+        };
+        unsafe {
+            Port::<u16>::new(dev.nambar + 0x02).write(reg_val); // Master Volume
+            Port::<u16>::new(dev.nambar + 0x18).write(reg_val); // PCM Out Volume
+        }
+    }
+}
+
+fn sin_approx(mut x: f32) -> f32 {
+    let pi = 3.14159265f32;
+    let two_pi = 2.0 * pi;
+    x = x % two_pi;
+    if x < 0.0 { x += two_pi; }
+    if x > pi {
+        return -sin_approx(x - pi);
+    }
+    // Bhaskara I sine approximation
+    let num = 16.0 * x * (pi - x);
+    let den = 5.0 * pi * pi - 4.0 * x * (pi - x);
+    if den == 0.0 { 0.0 } else { num / den }
+}
+
+pub fn play_test_chime() {
+    if !is_available() {
+        return;
+    }
+    set_sample_rate(44100);
+    // 4 descriptors: 4 * 1152 = 4608 samples (~104 ms)
+    let total_frames = 1152 * 4;
+    let mut buffer = alloc::vec::Vec::with_capacity(total_frames * 2);
+    for i in 0..total_frames {
+        let t = i as f32 / 44100.0;
+        let decay = 1.0 - (i as f32 / total_frames as f32);
+        let env = decay * decay;
+        // Two harmonic frequencies: 587.33 Hz (D5) and 880.0 Hz (A5)
+        let s1 = sin_approx(2.0 * 3.14159265 * 587.33 * t);
+        let s2 = sin_approx(2.0 * 3.14159265 * 880.0 * t) * 0.45;
+        let sample = ((s1 + s2) * env * 22000.0) as i16;
+        buffer.push(sample);
+        buffer.push(sample);
+    }
+    write_pcm_samples(&buffer);
+}
+
