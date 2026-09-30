@@ -530,9 +530,9 @@ fn test_mp3_stereo_sample_count() {
     let mut player = Mp3Player::new();
     player.play();
     assert!(player.is_playing);
-    // Decode until non-silent audio frames (skipping MP3 encoder priming delay)
+    // Decode until non-silent audio frames (skipping MP3 encoder priming delay and intro silence)
     let mut found_audio = false;
-    for _ in 0..15 {
+    for _ in 0..50 {
         if player.step_frame() {
             let max_first_half = player.pcm_i16[..1152].iter().map(|&s| s.abs()).max().unwrap_or(0);
             let max_second_half = player.pcm_i16[1152..2304].iter().map(|&s| s.abs()).max().unwrap_or(0);

@@ -90,7 +90,7 @@ impl Desktop {
         // Open initial windows in an organized layout
         desktop.spawn_sysinfo(390, 15, 395, 260);
         desktop.spawn_terminal(280, 290, 505, 265);
-        desktop.spawn_music(15, 20, 365, 260);
+        desktop.spawn_music(15, 20, 380, 280);
         desktop.spawn_settings(155, 20, 380, 260);
         if let Some(settings) = desktop.windows.last_mut() {
             settings.is_minimized = true;
@@ -376,7 +376,7 @@ impl Desktop {
                         2 => self.spawn_calculator(300, 140, 220, 280),
                         3 => self.spawn_notepad(220, 90, 360, 250),
                         4 => self.spawn_snake(200, 80, 320, 300),
-                        5 => self.spawn_music(180, 100, 380, 300),
+                        5 => self.spawn_music(180, 100, 380, 280),
                         6 => self.spawn_image_viewer(160, 60, 480, 360),
                         7 => self.spawn_settings(200, 120, 380, 280),
                         8 => self.spawn_elf_runner(160, 80, 520, 360),
@@ -449,7 +449,7 @@ impl Desktop {
                     2 => self.spawn_calculator(300, 140, 220, 280),
                     3 => self.spawn_notepad(220, 90, 360, 250),
                     4 => self.spawn_snake(200, 80, 320, 300),
-                    5 => self.spawn_music(180, 100, 380, 300),
+                    5 => self.spawn_music(180, 100, 380, 280),
                     6 => self.spawn_image_viewer(160, 60, 480, 360),
                     7 => self.spawn_settings(200, 120, 380, 280),
                     8 => self.spawn_elf_runner(160, 80, 520, 360),

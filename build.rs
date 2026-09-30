@@ -17,6 +17,7 @@ fn main() {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_file() {
+                println!("cargo:rerun-if-changed={}", path.display());
                 if let Some(ext) = path.extension() {
                     if ext.to_string_lossy().eq_ignore_ascii_case("mp3") {
                         if let Some(name) = path.file_name() {
