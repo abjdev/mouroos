@@ -8,6 +8,15 @@ use pc_keyboard::DecodedKey;
 pub const TITLEBAR_HEIGHT: usize = 22;
 pub const BORDER_WIDTH: usize = 4;
 
+#[derive(Debug, Clone)]
+pub enum DesktopAction {
+    OpenNotepad(alloc::string::String),
+    OpenImageViewer,
+    OpenMusic,
+    OpenElf(alloc::string::String),
+    OpenFileManager(alloc::string::String),
+}
+
 pub trait Application: Send {
     fn title(&self) -> &str;
     fn render(
@@ -28,6 +37,9 @@ pub trait Application: Send {
     fn should_close(&self) -> bool {
         false
     }
+    fn take_pending_action(&mut self) -> Option<DesktopAction> {
+        None
+    }
 }
 
 pub struct Window {
@@ -37,6 +49,8 @@ pub struct Window {
     pub width: usize,
     pub height: usize,
     pub is_minimized: bool,
+    pub is_maximized: bool,
+    pub saved_bounds: Option<(isize, isize, usize, usize)>,
     pub is_focused: bool,
     pub app: Box<dyn Application>,
 }
@@ -50,8 +64,29 @@ impl Window {
             width,
             height,
             is_minimized: false,
+            is_maximized: false,
+            saved_bounds: None,
             is_focused: false,
             app,
+        }
+    }
+
+    pub fn toggle_maximize(&mut self, work_w: usize, work_h: usize) {
+        if self.is_maximized {
+            if let Some((sx, sy, sw, sh)) = self.saved_bounds.take() {
+                self.x = sx;
+                self.y = sy;
+                self.width = sw;
+                self.height = sh;
+            }
+            self.is_maximized = false;
+        } else {
+            self.saved_bounds = Some((self.x, self.y, self.width, self.height));
+            self.x = 0;
+            self.y = 0;
+            self.width = work_w;
+            self.height = work_h;
+            self.is_maximized = true;
         }
     }
 
@@ -89,8 +124,14 @@ impl Window {
         px >= btn_x && px < btn_x + 16 && py >= btn_y && py < btn_y + 14
     }
 
-    pub fn is_over_minimize_button(&self, px: isize, py: isize) -> bool {
+    pub fn is_over_maximize_button(&self, px: isize, py: isize) -> bool {
         let btn_x = self.x + self.width as isize - 38;
+        let btn_y = self.y + 4;
+        px >= btn_x && px < btn_x + 16 && py >= btn_y && py < btn_y + 14
+    }
+
+    pub fn is_over_minimize_button(&self, px: isize, py: isize) -> bool {
+        let btn_x = self.x + self.width as isize - 56;
         let btn_y = self.y + 4;
         px >= btn_x && px < btn_x + 16 && py >= btn_y && py < btn_y + 14
     }
@@ -160,11 +201,26 @@ impl Window {
 
         // 4. Square 3D Titlebar Control Buttons
         // Minimize Button [-]
-        let min_x = self.x + self.width as isize - 38;
+        let min_x = self.x + self.width as isize - 56;
         let min_y = self.y + 4;
         fb.draw_button(min_x, min_y, 16, 14, false);
-        // Minimize horizontal line glyph at bottom
         fb.fill_rect(min_x + 4, min_y + 9, 6, 2, Color::RETRO_TEXT);
+
+        // Maximize / Restore Button
+        let max_x = self.x + self.width as isize - 38;
+        let max_y = self.y + 4;
+        fb.draw_button(max_x, max_y, 16, 14, false);
+        if self.is_maximized {
+            // Restore glyph: two overlapping small boxes
+            fb.draw_rect(max_x + 5, max_y + 2, 6, 6, Color::RETRO_TEXT);
+            fb.fill_rect(max_x + 5, max_y + 2, 6, 2, Color::RETRO_TEXT);
+            fb.draw_rect(max_x + 3, max_y + 5, 6, 6, Color::RETRO_TEXT);
+            fb.fill_rect(max_x + 3, max_y + 5, 6, 2, Color::RETRO_TEXT);
+        } else {
+            // Maximize glyph: single box with top bar
+            fb.draw_rect(max_x + 3, max_y + 3, 9, 8, Color::RETRO_TEXT);
+            fb.fill_rect(max_x + 3, max_y + 3, 9, 2, Color::RETRO_TEXT);
+        }
 
         // Close Button [X]
         let close_x = self.x + self.width as isize - 20;
@@ -190,7 +246,7 @@ impl Window {
     }
 
     fn icon_from_title(title: &str) -> AppIcon {
-        if title.contains("Terminal") {
+        if title.contains("Terminal") || title.contains("Prompt") {
             AppIcon::Terminal
         } else if title.contains("System") || title.contains("SysInfo") {
             AppIcon::SysInfo
@@ -210,6 +266,8 @@ impl Window {
             AppIcon::ElfRunner
         } else if title.contains("DOOM") {
             AppIcon::Doom
+        } else if title.contains("Explorer") || title.contains("File") {
+            AppIcon::FileManager
         } else {
             AppIcon::Terminal
         }

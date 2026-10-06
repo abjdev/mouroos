@@ -1,4 +1,5 @@
 pub mod apps;
+pub mod clipboard;
 pub mod color;
 pub mod desktop;
 pub mod font;
@@ -14,3 +15,4 @@ pub use framebuffer::Framebuffer;
 pub use theme::{Theme, ThemeKind};
 pub use welcome::show_welcome_screen;
 pub use window::{Application, Window};
+

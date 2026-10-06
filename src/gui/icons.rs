@@ -14,6 +14,7 @@ pub enum AppIcon {
     ElfRunner,
     Doom,
     Power,
+    FileManager,
 }
 
 impl AppIcon {
@@ -29,6 +30,7 @@ impl AppIcon {
             7 => AppIcon::Settings,
             8 => AppIcon::ElfRunner,
             9 => AppIcon::Doom,
+            10 => AppIcon::FileManager,
             _ => AppIcon::Power,
         }
     }
@@ -296,6 +298,23 @@ pub fn draw_icon_24(fb: &mut Framebuffer, x: isize, y: isize, icon: AppIcon) {
             // Center vertical power bar
             fb.fill_rect(x + 11, y + 4, 2, 8, Color::WHITE);
         }
+
+        AppIcon::FileManager => {
+            // Windows 98 Yellow Folder / Explorer icon
+            // Folder back tab
+            fb.fill_rect(x + 2, y + 3, 8, 4, Color::from_rgb(217, 119, 6));
+            fb.fill_rect(x + 2, y + 5, 20, 15, Color::from_rgb(245, 158, 11));
+            // White document sheet inside folder
+            fb.fill_rect(x + 5, y + 2, 14, 8, Color::WHITE);
+            fb.draw_rect(x + 5, y + 2, 14, 8, Color::from_rgb(148, 163, 184));
+            fb.fill_rect(x + 7, y + 4, 8, 1, Color::from_rgb(59, 130, 246));
+            fb.fill_rect(x + 7, y + 6, 10, 1, Color::from_rgb(100, 116, 139));
+            // Folder front flap (3D open look)
+            fb.fill_rect(x + 1, y + 8, 22, 13, Color::from_rgb(251, 191, 36));
+            fb.draw_rect(x + 1, y + 8, 22, 13, Color::from_rgb(180, 83, 9));
+            // Folder front highlight line
+            fb.fill_rect(x + 2, y + 9, 20, 1, Color::from_rgb(254, 240, 138));
+        }
     }
 }
 
@@ -440,5 +459,64 @@ pub fn draw_icon_16(fb: &mut Framebuffer, x: isize, y: isize, icon: AppIcon) {
             fb.fill_rect(x + 6, y + 3, 4, 3, Color::from_rgb(69, 10, 10));
             fb.fill_rect(x + 7, y + 2, 2, 6, Color::WHITE);
         }
+
+        AppIcon::FileManager => {
+            // 16x16 Folder icon
+            fb.fill_rect(x + 1, y + 2, 5, 2, Color::from_rgb(217, 119, 6));
+            fb.fill_rect(x + 1, y + 4, 14, 10, Color::from_rgb(245, 158, 11));
+            fb.fill_rect(x + 3, y + 2, 10, 5, Color::WHITE);
+            fb.fill_rect(x + 1, y + 6, 14, 8, Color::from_rgb(251, 191, 36));
+            fb.draw_rect(x + 1, y + 6, 14, 8, Color::from_rgb(180, 83, 9));
+        }
     }
 }
+
+/// Draw a 16x16 folder icon for file manager tree and list
+pub fn draw_folder_icon_16(fb: &mut Framebuffer, x: isize, y: isize) {
+    // Back tab
+    fb.fill_rect(x + 1, y + 2, 5, 2, Color::from_rgb(217, 119, 6));
+    fb.fill_rect(x + 1, y + 4, 14, 10, Color::from_rgb(245, 158, 11));
+    // Document peek
+    fb.fill_rect(x + 3, y + 2, 10, 4, Color::WHITE);
+    // Front pocket
+    fb.fill_rect(x + 1, y + 5, 14, 9, Color::from_rgb(251, 191, 36));
+    fb.draw_rect(x + 1, y + 5, 14, 9, Color::from_rgb(180, 83, 9));
+    fb.fill_rect(x + 2, y + 6, 12, 1, Color::from_rgb(254, 240, 138));
+}
+
+/// Draw a 16x16 file icon according to its extension / filename
+pub fn draw_file_icon_16(fb: &mut Framebuffer, x: isize, y: isize, filename: &str) {
+    if filename.ends_with(".elf") || filename.starts_with("bin") {
+        // Executable binary: rocket / gear
+        fb.fill_rect(x + 1, y + 1, 14, 14, Color::from_rgb(15, 23, 42));
+        fb.draw_rect(x + 1, y + 1, 14, 14, Color::from_rgb(244, 63, 94));
+        fb.fill_rect(x + 7, y + 3, 3, 3, Color::from_rgb(251, 113, 133));
+        fb.fill_rect(x + 5, y + 6, 4, 4, Color::from_rgb(244, 63, 94));
+        fb.fill_rect(x + 3, y + 9, 3, 3, Color::from_rgb(245, 158, 11));
+    } else if filename.ends_with(".mp3") || filename.ends_with(".wav") {
+        // Audio file: note
+        fb.fill_rect(x + 1, y + 1, 14, 14, Color::from_rgb(24, 24, 37));
+        fb.draw_rect(x + 1, y + 1, 14, 14, Color::from_rgb(168, 85, 247));
+        fb.fill_rect(x + 3, y + 9, 4, 3, Color::from_rgb(244, 63, 94));
+        fb.fill_rect(x + 5, y + 4, 2, 7, Color::from_rgb(244, 63, 94));
+        fb.fill_rect(x + 7, y + 4, 3, 2, Color::from_rgb(244, 63, 94));
+    } else if filename.ends_with(".png") || filename.ends_with(".bmp") || filename.ends_with(".ppm") {
+        // Image file: mountain + sun
+        fb.fill_rect(x + 1, y + 1, 14, 14, Color::from_rgb(30, 41, 59));
+        fb.draw_rect(x + 1, y + 1, 14, 14, Color::from_rgb(148, 163, 184));
+        fb.fill_rect(x + 9, y + 3, 3, 3, Color::from_rgb(251, 191, 36));
+        fb.fill_rect(x + 3, y + 8, 5, 5, Color::from_rgb(16, 185, 129));
+        fb.fill_rect(x + 7, y + 6, 6, 7, Color::from_rgb(79, 70, 229));
+    } else {
+        // Standard text / config / data document: white page with folded corner
+        fb.fill_rect(x + 2, y + 1, 12, 14, Color::WHITE);
+        fb.draw_rect(x + 2, y + 1, 12, 14, Color::from_rgb(148, 163, 184));
+        // Folded corner
+        fb.fill_rect(x + 10, y + 1, 4, 4, Color::from_rgb(203, 213, 225));
+        // Text lines
+        fb.fill_rect(x + 4, y + 4, 5, 1, Color::from_rgb(59, 130, 246));
+        fb.fill_rect(x + 4, y + 7, 7, 1, Color::from_rgb(100, 116, 139));
+        fb.fill_rect(x + 4, y + 10, 6, 1, Color::from_rgb(100, 116, 139));
+    }
+}
+

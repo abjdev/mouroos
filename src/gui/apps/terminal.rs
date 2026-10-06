@@ -75,6 +75,8 @@ pub struct TerminalApp {
     history_draft: String,
     env_vars: Vec<(String, String)>,
     shift_pressed: bool,
+    ctrl_pressed: bool,
+    pending_action: Option<crate::gui::window::DesktopAction>,
 }
 
 impl TerminalApp {
@@ -89,6 +91,8 @@ impl TerminalApp {
             history_index: None,
             history_draft: String::new(),
             shift_pressed: false,
+            ctrl_pressed: false,
+            pending_action: None,
             env_vars: alloc::vec![
                 (String::from("USER"), String::from("user")),
                 (String::from("HOME"), String::from("/home/user")),
@@ -470,6 +474,8 @@ impl TerminalApp {
                 out.push(String::from("  elf [cmd] - Execute 64-bit ELF binaries (supports &)"));
                 out.push(String::from("  mp3 [cmd] - MP3 audio player"));
                 out.push(String::from("  doom [cmd]- DOOM 1993 engine"));
+                out.push(String::from("  explorer [d] - Open Mouros Explorer GUI file manager"));
+                out.push(String::from("  notepad [f]  - Open Notepad GUI text editor"));
                 out.push(String::from("  beep      - Test PC speaker sound"));
                 out.push(String::from("  reboot    - Reboot the computer"));
                 out.push(String::from("  shutdown  - Power off system"));
@@ -1415,6 +1421,24 @@ impl TerminalApp {
                     port.write(0xFEu8);
                 }
             }
+            "explorer" | "files" => {
+                let target = if args.is_empty() {
+                    self.cwd.clone()
+                } else {
+                    crate::fs::resolve_relative_path(&self.cwd, args[0])
+                };
+                self.pending_action = Some(crate::gui::window::DesktopAction::OpenFileManager(target.clone()));
+                out.push(format!("Opening Mouros Explorer at {}...", target));
+            }
+            "notepad" | "edit" => {
+                let target = if args.is_empty() {
+                    format!("{}/document.txt", self.cwd)
+                } else {
+                    crate::fs::resolve_relative_path(&self.cwd, args[0])
+                };
+                self.pending_action = Some(crate::gui::window::DesktopAction::OpenNotepad(target.clone()));
+                out.push(format!("Opening Notepad at {}...", target));
+            }
             unknown => {
                 self.lines.push(format!("Unknown command: '{}'. Type 'help' for commands.", unknown));
             }
@@ -1514,24 +1538,70 @@ impl Application for TerminalApp {
 
     fn on_key(&mut self, key: DecodedKey) {
         match key {
-            DecodedKey::Unicode(c) => match c {
-                '\t' => {
-                    self.tab_complete();
-                }
-                '\n' | '\r' => {
-                    self.execute_command();
-                }
-                '\u{0008}' => {
-                    // Backspace
-                    self.current_input.pop();
-                }
-                c if c >= ' ' && c <= '~' => {
-                    if self.current_input.len() < 256 {
-                        self.current_input.push(c);
+            DecodedKey::Unicode(c) => {
+                if self.ctrl_pressed {
+                    match c {
+                        'v' | 'V' | '\x16' => {
+                            let text = crate::gui::clipboard::get_text();
+                            for ch in text.chars() {
+                                if ch >= ' ' && ch <= '~' && self.current_input.len() < 256 {
+                                    self.current_input.push(ch);
+                                }
+                            }
+                            return;
+                        }
+                        'c' | 'C' | '\x03' => {
+                            if self.current_input.is_empty() {
+                                if let Some(last_cmd) = self.history.last() {
+                                    crate::gui::clipboard::set_text(last_cmd);
+                                }
+                            } else {
+                                self.lines.push(format!("mouros:{}$ {}^C", self.cwd, self.current_input));
+                                self.current_input.clear();
+                            }
+                            return;
+                        }
+                        _ => {}
                     }
                 }
-                _ => {}
-            },
+
+                match c {
+                    '\x16' => {
+                        let text = crate::gui::clipboard::get_text();
+                        for ch in text.chars() {
+                            if ch >= ' ' && ch <= '~' && self.current_input.len() < 256 {
+                                self.current_input.push(ch);
+                            }
+                        }
+                    }
+                    '\x03' => {
+                        if self.current_input.is_empty() {
+                            if let Some(last_cmd) = self.history.last() {
+                                crate::gui::clipboard::set_text(last_cmd);
+                            }
+                        } else {
+                            self.lines.push(format!("mouros:{}$ {}^C", self.cwd, self.current_input));
+                            self.current_input.clear();
+                        }
+                    }
+                    '\t' => {
+                        self.tab_complete();
+                    }
+                    '\n' | '\r' => {
+                        self.execute_command();
+                    }
+                    '\u{0008}' => {
+                        // Backspace
+                        self.current_input.pop();
+                    }
+                    c if c >= ' ' && c <= '~' => {
+                        if self.current_input.len() < 256 {
+                            self.current_input.push(c);
+                        }
+                    }
+                    _ => {}
+                }
+            }
             DecodedKey::RawKey(KeyCode::Tab) => {
                 self.tab_complete();
             }
@@ -1559,6 +1629,9 @@ impl Application for TerminalApp {
             KeyCode::LShift | KeyCode::RShift => {
                 self.shift_pressed = event.state == pc_keyboard::KeyState::Down;
             }
+            KeyCode::LControl | KeyCode::RControl => {
+                self.ctrl_pressed = event.state == pc_keyboard::KeyState::Down;
+            }
             _ => {}
         }
     }
@@ -1574,6 +1647,10 @@ impl Application for TerminalApp {
         } else {
             false
         }
+    }
+
+    fn take_pending_action(&mut self) -> Option<crate::gui::window::DesktopAction> {
+        self.pending_action.take()
     }
 }
 

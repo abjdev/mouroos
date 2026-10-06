@@ -1,6 +1,6 @@
 use super::apps::{
-    CalculatorApp, DoomApp, ElfRunnerApp, ImageViewerApp, MusicApp, NotepadApp, SettingsApp,
-    SnakeApp, SysInfoApp, TerminalApp,
+    CalculatorApp, DoomApp, ElfRunnerApp, FileManagerApp, ImageViewerApp, MusicApp, NotepadApp,
+    SettingsApp, SnakeApp, SysInfoApp, TerminalApp,
 };
 use super::color::Color;
 use super::font::FONT_WIDTH;
@@ -13,7 +13,7 @@ use crate::drivers::rtc;
 use alloc::boxed::Box;
 use alloc::format;
 use alloc::vec::Vec;
-use pc_keyboard::{DecodedKey, HandleControl, Keyboard, ScancodeSet1, layouts};
+use pc_keyboard::{DecodedKey, HandleControl, KeyCode, KeyState, Keyboard, ScancodeSet1, layouts};
 use x86_64::instructions::port::Port;
 
 const TASKBAR_HEIGHT: usize = 28;
@@ -34,7 +34,7 @@ pub struct Desktop {
     drag_offset_x: isize,
     drag_offset_y: isize,
     start_menu_open: bool,
-    icons: [DesktopIcon; 10],
+    icons: [DesktopIcon; 11],
     prev_left_pressed: bool,
     pub theme: Theme,
     cursor_saved: [u32; 24 * 24],
@@ -44,6 +44,14 @@ pub struct Desktop {
     clock_cache: rtc::RtcTime,
     last_clock_sec: u8,
     tick_count: usize,
+    pub selected_desktop_icon: Option<usize>,
+    last_icon_click_idx: Option<usize>,
+    last_icon_click_tick: usize,
+    pub alt_pressed: bool,
+    pub alt_tab_active: bool,
+    pub alt_tab_selected: usize,
+    last_title_click_win: Option<usize>,
+    last_title_click_tick: usize,
 }
 
 impl Desktop {
@@ -62,6 +70,7 @@ impl Desktop {
             DesktopIcon { name: "Settings", x: 80, y: 152, app_id: 7 },
             DesktopIcon { name: "ELF Run",  x: 80, y: 220, app_id: 8 },
             DesktopIcon { name: "DOOM",     x: 80, y: 288, app_id: 9 },
+            DesktopIcon { name: "Explorer", x: 16, y: 356, app_id: 10 },
         ];
 
         let clock = rtc::read_time();
@@ -85,6 +94,14 @@ impl Desktop {
             clock_cache: clock,
             last_clock_sec: clock.seconds,
             tick_count: 0,
+            selected_desktop_icon: None,
+            last_icon_click_idx: None,
+            last_icon_click_tick: 0,
+            alt_pressed: false,
+            alt_tab_active: false,
+            alt_tab_selected: 0,
+            last_title_click_win: None,
+            last_title_click_tick: 0,
         };
 
         // Open initial windows in an organized layout
@@ -193,6 +210,61 @@ impl Desktop {
         win.is_focused = true;
         self.unfocus_all();
         self.windows.push(win);
+    }
+
+    pub fn spawn_file_manager(&mut self, x: isize, y: isize, w: usize, h: usize, path: &str) {
+        let id = self.next_window_id;
+        self.next_window_id += 1;
+        let mut win = Window::new(id, x, y, w, h, Box::new(FileManagerApp::with_path(path)));
+        win.is_focused = true;
+        self.unfocus_all();
+        self.windows.push(win);
+    }
+
+    pub fn spawn_notepad_with_file(&mut self, x: isize, y: isize, w: usize, h: usize, path: &str) {
+        let id = self.next_window_id;
+        self.next_window_id += 1;
+        let mut win = Window::new(id, x, y, w, h, Box::new(NotepadApp::open_file(path)));
+        win.is_focused = true;
+        self.unfocus_all();
+        self.windows.push(win);
+    }
+
+    pub fn launch_app_by_id(&mut self, app_id: usize) {
+        match app_id {
+            0 => self.spawn_terminal(140, 80, 480, 270),
+            1 => self.spawn_sysinfo(180, 100, 420, 260),
+            2 => self.spawn_calculator(300, 140, 220, 280),
+            3 => self.spawn_notepad(220, 90, 360, 250),
+            4 => self.spawn_snake(200, 80, 320, 300),
+            5 => self.spawn_music(180, 100, 380, 280),
+            6 => self.spawn_image_viewer(160, 60, 480, 360),
+            7 => self.spawn_settings(190, 110, 410, 330),
+            8 => self.spawn_elf_runner(160, 80, 520, 360),
+            9 => self.spawn_doom(78, 45, 644, 454),
+            10 => self.spawn_file_manager(120, 70, 580, 380, "/home/user"),
+            _ => {}
+        }
+    }
+
+    pub fn handle_desktop_action(&mut self, action: super::window::DesktopAction) {
+        match action {
+            super::window::DesktopAction::OpenNotepad(path) => {
+                self.spawn_notepad_with_file(220, 90, 420, 300, &path);
+            }
+            super::window::DesktopAction::OpenImageViewer => {
+                self.spawn_image_viewer(160, 60, 480, 360);
+            }
+            super::window::DesktopAction::OpenMusic => {
+                self.spawn_music(180, 100, 380, 280);
+            }
+            super::window::DesktopAction::OpenElf(_path) => {
+                self.spawn_elf_runner(160, 80, 520, 360);
+            }
+            super::window::DesktopAction::OpenFileManager(path) => {
+                self.spawn_file_manager(120, 70, 580, 380, &path);
+            }
+        }
     }
 
     fn unfocus_all(&mut self) {
@@ -309,7 +381,32 @@ impl Desktop {
 
         if left_just_released {
             let was_dragging = self.dragging_window_idx.is_some();
-            self.dragging_window_idx = None;
+            if let Some(win_idx) = self.dragging_window_idx.take() {
+                let work_w = self.fb.width;
+                let work_h = self.fb.height.saturating_sub(TASKBAR_HEIGHT);
+                if let Some(win) = self.windows.get_mut(win_idx) {
+                    if win.x <= 5 {
+                        // Snap Left Half
+                        win.x = 0;
+                        win.y = 0;
+                        win.width = work_w / 2;
+                        win.height = work_h;
+                        win.is_maximized = false;
+                    } else if win.x + win.width as isize >= work_w as isize - 5 {
+                        // Snap Right Half
+                        win.x = (work_w / 2) as isize;
+                        win.y = 0;
+                        win.width = work_w / 2;
+                        win.height = work_h;
+                        win.is_maximized = false;
+                    } else if win.y <= 5 {
+                        // Snap Top Maximize
+                        if !win.is_maximized {
+                            win.toggle_maximize(work_w, work_h);
+                        }
+                    }
+                }
+            }
             return was_dragging;
         }
 
@@ -355,7 +452,7 @@ impl Desktop {
         // 2. Check Start Menu Clicks if open
         if self.start_menu_open {
             let menu_w = 210;
-            let menu_h = 276;
+            let menu_h = 300;
             let menu_x = 2;
             let menu_y = taskbar_y - menu_h as isize;
 
@@ -364,17 +461,8 @@ impl Desktop {
                 if rel_y >= 0 {
                     let item_idx = (rel_y / 24) as usize;
                     match item_idx {
-                        0 => self.spawn_terminal(140, 80, 480, 270),
-                        1 => self.spawn_sysinfo(180, 100, 420, 260),
-                        2 => self.spawn_calculator(300, 140, 220, 280),
-                        3 => self.spawn_notepad(220, 90, 360, 250),
-                        4 => self.spawn_snake(200, 80, 320, 300),
-                        5 => self.spawn_music(180, 100, 380, 280),
-                        6 => self.spawn_image_viewer(160, 60, 480, 360),
-                        7 => self.spawn_settings(190, 110, 410, 330),
-                        8 => self.spawn_elf_runner(160, 80, 520, 360),
-                        9 => self.spawn_doom(78, 45, 644, 454),
-                        10 => {
+                        0..=10 => self.launch_app_by_id(item_idx),
+                        11 => {
                             // Reboot
                             unsafe {
                                 let mut port = Port::new(0x64);
@@ -405,6 +493,15 @@ impl Desktop {
                 return true;
             }
 
+            // Maximize / Restore button check
+            if self.windows[i].is_over_maximize_button(ev.x, ev.y) {
+                let work_w = self.fb.width;
+                let work_h = self.fb.height.saturating_sub(TASKBAR_HEIGHT);
+                self.windows[i].toggle_maximize(work_w, work_h);
+                self.focus_window_at_index(i);
+                return true;
+            }
+
             // Minimize button check
             if self.windows[i].is_over_minimize_button(ev.x, ev.y) {
                 self.windows[i].is_minimized = true;
@@ -413,8 +510,22 @@ impl Desktop {
                 return true;
             }
 
-            // Titlebar click: focus and initiate dragging
+            // Titlebar click: focus and initiate dragging (or double-click to maximize)
             if self.windows[i].is_over_titlebar(ev.x, ev.y) {
+                let win_id = self.windows[i].id;
+                let is_double = self.last_title_click_win == Some(win_id)
+                    && self.tick_count.saturating_sub(self.last_title_click_tick) < 45;
+                self.last_title_click_win = Some(win_id);
+                self.last_title_click_tick = self.tick_count;
+
+                if is_double {
+                    let work_w = self.fb.width;
+                    let work_h = self.fb.height.saturating_sub(TASKBAR_HEIGHT);
+                    self.windows[i].toggle_maximize(work_w, work_h);
+                    self.focus_window_at_index(i);
+                    return true;
+                }
+
                 self.focus_window_at_index(i);
                 let top_idx = self.windows.len() - 1;
                 self.dragging_window_idx = Some(top_idx);
@@ -430,6 +541,9 @@ impl Desktop {
             let local_x = ev.x - cx;
             let local_y = ev.y - cy;
             self.windows[top_idx].app.on_mouse_click(local_x, local_y, true);
+            if let Some(act) = self.windows[top_idx].app.take_pending_action() {
+                self.handle_desktop_action(act);
+            }
             if self.windows[top_idx].app.should_close() {
                 self.windows.remove(top_idx);
             }
@@ -437,26 +551,24 @@ impl Desktop {
         }
 
         // 4. Check Desktop Icons
-        for icon in &self.icons {
+        for (idx, icon) in self.icons.iter().enumerate() {
             if ev.x >= icon.x && ev.x < icon.x + 56 && ev.y >= icon.y && ev.y < icon.y + 60 {
-                match icon.app_id {
-                    0 => self.spawn_terminal(140, 80, 480, 270),
-                    1 => self.spawn_sysinfo(180, 100, 420, 260),
-                    2 => self.spawn_calculator(300, 140, 220, 280),
-                    3 => self.spawn_notepad(220, 90, 360, 250),
-                    4 => self.spawn_snake(200, 80, 320, 300),
-                    5 => self.spawn_music(180, 100, 380, 280),
-                    6 => self.spawn_image_viewer(160, 60, 480, 360),
-                    7 => self.spawn_settings(190, 110, 410, 330),
-                    8 => self.spawn_elf_runner(160, 80, 520, 360),
-                    9 => self.spawn_doom(78, 45, 644, 454),
-                    _ => {}
+                let is_double = self.last_icon_click_idx == Some(idx)
+                    && self.tick_count.saturating_sub(self.last_icon_click_tick) < 45;
+                self.selected_desktop_icon = Some(idx);
+                self.last_icon_click_idx = Some(idx);
+                self.last_icon_click_tick = self.tick_count;
+
+                if is_double {
+                    self.launch_app_by_id(icon.app_id);
+                    self.last_icon_click_idx = None;
                 }
                 return true;
             }
         }
 
         // 5. Click on empty desktop background
+        self.selected_desktop_icon = None;
         if self.start_menu_open {
             self.start_menu_open = false;
             return true;
@@ -466,6 +578,23 @@ impl Desktop {
     }
 
     pub fn handle_raw_key_event(&mut self, event: pc_keyboard::KeyEvent) {
+        match event.code {
+            KeyCode::LAlt | KeyCode::RAltGr | KeyCode::RAlt2 => {
+                if event.state == KeyState::Down {
+                    self.alt_pressed = true;
+                } else if event.state == KeyState::Up {
+                    self.alt_pressed = false;
+                    if self.alt_tab_active {
+                        self.alt_tab_active = false;
+                        if !self.windows.is_empty() && self.alt_tab_selected < self.windows.len() {
+                            self.focus_window_at_index(self.alt_tab_selected);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+
         for win in self.windows.iter_mut().rev() {
             if win.is_focused && !win.is_minimized {
                 win.app.on_raw_key(event);
@@ -475,8 +604,76 @@ impl Desktop {
     }
 
     pub fn handle_key_event(&mut self, key: DecodedKey) {
+        if self.alt_pressed {
+            match key {
+                DecodedKey::RawKey(KeyCode::Tab) | DecodedKey::Unicode('\t') => {
+                    if !self.windows.is_empty() {
+                        if !self.alt_tab_active {
+                            self.alt_tab_active = true;
+                            self.alt_tab_selected = if self.windows.len() > 1 {
+                                self.windows.len() - 2
+                            } else {
+                                0
+                            };
+                        } else {
+                            self.alt_tab_selected = (self.alt_tab_selected + 1) % self.windows.len();
+                        }
+                    }
+                    return;
+                }
+                DecodedKey::RawKey(KeyCode::ArrowLeft) => {
+                    if let Some(pos) = self.windows.iter().rposition(|w| w.is_focused && !w.is_minimized) {
+                        let work_w = self.fb.width;
+                        let work_h = self.fb.height.saturating_sub(TASKBAR_HEIGHT);
+                        self.windows[pos].x = 0;
+                        self.windows[pos].y = 0;
+                        self.windows[pos].width = work_w / 2;
+                        self.windows[pos].height = work_h;
+                        self.windows[pos].is_maximized = false;
+                    }
+                    return;
+                }
+                DecodedKey::RawKey(KeyCode::ArrowRight) => {
+                    if let Some(pos) = self.windows.iter().rposition(|w| w.is_focused && !w.is_minimized) {
+                        let work_w = self.fb.width;
+                        let work_h = self.fb.height.saturating_sub(TASKBAR_HEIGHT);
+                        self.windows[pos].x = (work_w / 2) as isize;
+                        self.windows[pos].y = 0;
+                        self.windows[pos].width = work_w / 2;
+                        self.windows[pos].height = work_h;
+                        self.windows[pos].is_maximized = false;
+                    }
+                    return;
+                }
+                DecodedKey::RawKey(KeyCode::ArrowUp) => {
+                    if let Some(pos) = self.windows.iter().rposition(|w| w.is_focused && !w.is_minimized) {
+                        let work_w = self.fb.width;
+                        let work_h = self.fb.height.saturating_sub(TASKBAR_HEIGHT);
+                        if !self.windows[pos].is_maximized {
+                            self.windows[pos].toggle_maximize(work_w, work_h);
+                        }
+                    }
+                    return;
+                }
+                DecodedKey::RawKey(KeyCode::ArrowDown) => {
+                    if let Some(pos) = self.windows.iter().rposition(|w| w.is_focused && !w.is_minimized) {
+                        let work_w = self.fb.width;
+                        let work_h = self.fb.height.saturating_sub(TASKBAR_HEIGHT);
+                        if self.windows[pos].is_maximized {
+                            self.windows[pos].toggle_maximize(work_w, work_h);
+                        }
+                    }
+                    return;
+                }
+                _ => {}
+            }
+        }
+
         if let Some(pos) = self.windows.iter().rposition(|w| w.is_focused && !w.is_minimized) {
             self.windows[pos].app.on_key(key);
+            if let Some(act) = self.windows[pos].app.take_pending_action() {
+                self.handle_desktop_action(act);
+            }
             if self.windows[pos].app.should_close() {
                 self.windows.remove(pos);
             }
@@ -519,6 +716,19 @@ impl Desktop {
         // Check if resolution change was requested
         if let Some((new_w, new_h)) = crate::gui::theme::take_pending_resolution() {
             self.set_resolution(new_w, new_h);
+            changed = true;
+        }
+
+        // Check pending actions from windows
+        let mut pending_action = None;
+        for win in &mut self.windows {
+            if let Some(act) = win.app.take_pending_action() {
+                pending_action = Some(act);
+                break;
+            }
+        }
+        if let Some(act) = pending_action {
+            self.handle_desktop_action(act);
             changed = true;
         }
 
@@ -601,12 +811,16 @@ impl Desktop {
 
         // 2. Render Desktop Icons (Clean Windows 98 style directly on teal desktop)
         let mouse_state = mouse::get_mouse_state();
-        for icon in &self.icons {
+        for (idx, icon) in self.icons.iter().enumerate() {
+            let is_selected = self.selected_desktop_icon == Some(idx);
             let is_hovered = mouse_state.x >= icon.x && mouse_state.x < icon.x + 54
                 && mouse_state.y >= icon.y && mouse_state.y < icon.y + 54;
 
-            if is_hovered {
+            if is_selected {
                 // Retro selection box
+                self.fb.fill_rect(icon.x + 2, icon.y + 2, 50, 48, Color::RETRO_SELECTION);
+                self.fb.draw_rect(icon.x + 2, icon.y + 2, 50, 48, Color::WHITE);
+            } else if is_hovered {
                 self.fb.draw_rect(icon.x + 2, icon.y + 2, 50, 48, Color::RETRO_HIGHLIGHT);
             }
 
@@ -616,8 +830,12 @@ impl Desktop {
             // Icon label with retro drop shadow on teal background
             let label_len = icon.name.len() * FONT_WIDTH;
             let lx = icon.x + (54 - label_len as isize) / 2;
-            self.fb.draw_string(lx + 1, icon.y + 36, icon.name, Color::BLACK);
-            self.fb.draw_string(lx, icon.y + 35, icon.name, Color::WHITE);
+            if is_selected {
+                self.fb.draw_string(lx, icon.y + 35, icon.name, Color::WHITE);
+            } else {
+                self.fb.draw_string(lx + 1, icon.y + 36, icon.name, Color::BLACK);
+                self.fb.draw_string(lx, icon.y + 35, icon.name, Color::WHITE);
+            }
         }
 
         // 3. Render Windows in z-order
@@ -709,7 +927,7 @@ impl Desktop {
         // 5. Render Start Menu Popup if open (Windows 98 Style)
         if self.start_menu_open {
             let menu_w = 210;
-            let menu_h = 276;
+            let menu_h = 300;
             let menu_x = 2;
             let menu_y = taskbar_y - menu_h as isize;
 
@@ -752,7 +970,8 @@ impl Desktop {
                 (7, "Desktop Settings"),
                 (8, "ELF Runner"),
                 (9, "DOOM (1993)"),
-                (10, "Shut Down..."),
+                (10, "Mouros Explorer"),
+                (11, "Shut Down..."),
             ];
 
             for (i, (icon_id, name)) in items.iter().enumerate() {
@@ -773,7 +992,7 @@ impl Desktop {
 
                 let text_color = if is_hovered {
                     Color::WHITE
-                } else if *icon_id == 10 {
+                } else if *icon_id == 11 {
                     Color::from_rgb(180, 20, 20)
                 } else if *icon_id == 9 {
                     Color::from_rgb(160, 100, 0)
@@ -784,17 +1003,56 @@ impl Desktop {
                 self.fb.draw_string(ix + 26, iy + 4, name, text_color);
 
                 // Groove separator before Shut Down
-                if i == 9 {
+                if i == 10 {
                     self.fb.draw_groove(ix, iy + 24, iw, 2);
                 }
             }
         }
 
-        // 6. Draw Mouse Cursor on top of everything
+        // 6. Alt+Tab Window Switcher Modal Overlay
+        if self.alt_tab_active && !self.windows.is_empty() {
+            let overlay_w = 380;
+            let overlay_h = 96;
+            let ox = (self.fb.width as isize - overlay_w as isize) / 2;
+            let oy = (self.fb.height as isize - overlay_h as isize) / 2;
+
+            self.fb.fill_rect(ox, oy, overlay_w, overlay_h, Color::RETRO_FACE);
+            self.fb.draw_bevel_raised(ox, oy, overlay_w, overlay_h);
+
+            let inner_w = overlay_w - 16;
+            let inner_h = 44;
+            self.fb.draw_sunken_panel(ox + 8, oy + 8, inner_w, inner_h);
+            self.fb.fill_rect(ox + 10, oy + 10, inner_w - 4, inner_h - 4, Color::from_rgb(230, 230, 230));
+
+            let slot_w = 36;
+            let start_ix = ox + 14;
+            for (idx, win) in self.windows.iter().enumerate() {
+                let ix = start_ix + (idx as isize * slot_w);
+                if ix + slot_w > ox + inner_w as isize {
+                    break;
+                }
+                let is_sel = idx == self.alt_tab_selected;
+                if is_sel {
+                    self.fb.fill_rect(ix - 2, oy + 12, 32, 32, Color::RETRO_SELECTION);
+                    self.fb.draw_rect(ix - 2, oy + 12, 32, 32, Color::WHITE);
+                }
+                let icon = Self::icon_from_title(win.app.title());
+                icons::draw_icon_24(&mut self.fb, ix + 2, oy + 16, icon);
+            }
+
+            if self.alt_tab_selected < self.windows.len() {
+                let title = self.windows[self.alt_tab_selected].app.title();
+                let tw = title.len() * FONT_WIDTH;
+                let tx = ox + (overlay_w as isize - tw as isize) / 2;
+                self.fb.draw_string(tx, oy + 64, title, Color::BLACK);
+            }
+        }
+
+        // 7. Draw Mouse Cursor on top of everything
         self.save_cursor_bg(mouse_state.x, mouse_state.y);
         self.fb.draw_cursor(mouse_state.x, mouse_state.y);
 
-        // 7. Blit backbuffer to screen
+        // 8. Blit backbuffer to screen
         self.fb.flush();
     }
 
@@ -819,6 +1077,8 @@ impl Desktop {
             icons::AppIcon::ElfRunner
         } else if title.contains("DOOM") {
             icons::AppIcon::Doom
+        } else if title.contains("Explorer") || title.contains("File") {
+            icons::AppIcon::FileManager
         } else {
             icons::AppIcon::Terminal
         }

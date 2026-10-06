@@ -16,6 +16,7 @@ pub struct NotepadApp {
     pub current_file: String,
     pub modified: bool,
     pub status_msg: Option<(String, usize)>,
+    pub ctrl_pressed: bool,
 }
 
 impl NotepadApp {
@@ -56,6 +57,7 @@ impl NotepadApp {
             current_file,
             modified: false,
             status_msg: None,
+            ctrl_pressed: false,
         }
     }
 
@@ -161,6 +163,15 @@ impl Application for NotepadApp {
         fb.draw_string(client_x + client_w as isize - 104, status_y + 3, &status_str, Color::BLACK);
     }
 
+    fn on_raw_key(&mut self, event: pc_keyboard::KeyEvent) {
+        match event.code {
+            KeyCode::LControl | KeyCode::RControl => {
+                self.ctrl_pressed = event.state == pc_keyboard::KeyState::Down;
+            }
+            _ => {}
+        }
+    }
+
     fn on_key(&mut self, key: DecodedKey) {
         if self.lines.is_empty() {
             self.lines.push(String::new());
@@ -169,53 +180,138 @@ impl Application for NotepadApp {
         self.cursor_col = self.cursor_col.min(self.lines[self.cursor_row].len());
 
         match key {
-            DecodedKey::Unicode(c) => match c {
-                '\x13' => {
-                    // Ctrl+S: Save file
-                    self.save_file();
-                }
-                '\n' | '\r' => {
-                    if self.lines.len() < 500 {
-                        let current_line = &self.lines[self.cursor_row];
-                        let rest = if self.cursor_col < current_line.len() {
-                            current_line[self.cursor_col..].into()
-                        } else {
-                            String::new()
-                        };
-                        self.lines[self.cursor_row].truncate(self.cursor_col);
-                        self.cursor_row += 1;
-                        self.cursor_col = 0;
-                        self.lines.insert(self.cursor_row, rest);
-                        self.modified = true;
+            DecodedKey::Unicode(c) => {
+                if self.ctrl_pressed {
+                    match c {
+                        'c' | 'C' | '\x03' => {
+                            if self.cursor_row < self.lines.len() {
+                                crate::gui::clipboard::set_text(&self.lines[self.cursor_row]);
+                                self.status_msg = Some((String::from("Copied line"), 50));
+                            }
+                            return;
+                        }
+                        'v' | 'V' | '\x16' => {
+                            let text = crate::gui::clipboard::get_text();
+                            for ch in text.chars() {
+                                if ch == '\n' {
+                                    let current_line = &self.lines[self.cursor_row];
+                                    let rest = if self.cursor_col < current_line.len() {
+                                        current_line[self.cursor_col..].into()
+                                    } else {
+                                        String::new()
+                                    };
+                                    self.lines[self.cursor_row].truncate(self.cursor_col);
+                                    self.cursor_row += 1;
+                                    self.cursor_col = 0;
+                                    self.lines.insert(self.cursor_row, rest);
+                                    self.modified = true;
+                                } else if ch >= ' ' && ch <= '~' && self.lines[self.cursor_row].len() < 256 {
+                                    self.lines[self.cursor_row].insert(self.cursor_col, ch);
+                                    self.cursor_col += 1;
+                                    self.modified = true;
+                                }
+                            }
+                            self.status_msg = Some((String::from("Pasted"), 50));
+                            return;
+                        }
+                        'x' | 'X' | '\x18' => {
+                            if self.cursor_row < self.lines.len() {
+                                crate::gui::clipboard::set_text(&self.lines[self.cursor_row]);
+                                self.lines.remove(self.cursor_row);
+                                if self.lines.is_empty() {
+                                    self.lines.push(String::new());
+                                }
+                                self.cursor_row = self.cursor_row.min(self.lines.len() - 1);
+                                self.cursor_col = self.cursor_col.min(self.lines[self.cursor_row].len());
+                                self.modified = true;
+                                self.status_msg = Some((String::from("Cut line"), 50));
+                            }
+                            return;
+                        }
+                        's' | 'S' | '\x13' => {
+                            self.save_file();
+                            return;
+                        }
+                        _ => {}
                     }
                 }
-                '\u{0008}' => {
-                    // Backspace
-                    if self.cursor_col > 0 {
-                        self.cursor_col -= 1;
-                        if self.cursor_col < self.lines[self.cursor_row].len() {
-                            self.lines[self.cursor_row].remove(self.cursor_col);
+
+                match c {
+                    '\x03' => {
+                        if self.cursor_row < self.lines.len() {
+                            crate::gui::clipboard::set_text(&self.lines[self.cursor_row]);
+                            self.status_msg = Some((String::from("Copied line"), 50));
+                        }
+                    }
+                    '\x16' => {
+                        let text = crate::gui::clipboard::get_text();
+                        for ch in text.chars() {
+                            if ch >= ' ' && ch <= '~' && self.lines[self.cursor_row].len() < 256 {
+                                self.lines[self.cursor_row].insert(self.cursor_col, ch);
+                                self.cursor_col += 1;
+                                self.modified = true;
+                            }
+                        }
+                        self.status_msg = Some((String::from("Pasted"), 50));
+                    }
+                    '\x18' => {
+                        if self.cursor_row < self.lines.len() {
+                            crate::gui::clipboard::set_text(&self.lines[self.cursor_row]);
+                            self.lines.remove(self.cursor_row);
+                            if self.lines.is_empty() {
+                                self.lines.push(String::new());
+                            }
+                            self.cursor_row = self.cursor_row.min(self.lines.len() - 1);
+                            self.cursor_col = self.cursor_col.min(self.lines[self.cursor_row].len());
+                            self.modified = true;
+                            self.status_msg = Some((String::from("Cut line"), 50));
+                        }
+                    }
+                    '\x13' => {
+                        self.save_file();
+                    }
+                    '\n' | '\r' => {
+                        if self.lines.len() < 500 {
+                            let current_line = &self.lines[self.cursor_row];
+                            let rest = if self.cursor_col < current_line.len() {
+                                current_line[self.cursor_col..].into()
+                            } else {
+                                String::new()
+                            };
+                            self.lines[self.cursor_row].truncate(self.cursor_col);
+                            self.cursor_row += 1;
+                            self.cursor_col = 0;
+                            self.lines.insert(self.cursor_row, rest);
                             self.modified = true;
                         }
-                    } else if self.cursor_row > 0 {
-                        let current = self.lines.remove(self.cursor_row);
-                        self.cursor_row -= 1;
-                        self.cursor_col = self.lines[self.cursor_row].len();
-                        self.lines[self.cursor_row].push_str(&current);
-                        self.modified = true;
                     }
-                }
-                c if c >= ' ' && c <= '~' => {
-                    if self.lines[self.cursor_row].len() < 256 {
-                        if self.cursor_col <= self.lines[self.cursor_row].len() {
-                            self.lines[self.cursor_row].insert(self.cursor_col, c);
-                            self.cursor_col += 1;
+                    '\u{0008}' => {
+                        if self.cursor_col > 0 {
+                            self.cursor_col -= 1;
+                            if self.cursor_col < self.lines[self.cursor_row].len() {
+                                self.lines[self.cursor_row].remove(self.cursor_col);
+                                self.modified = true;
+                            }
+                        } else if self.cursor_row > 0 {
+                            let current = self.lines.remove(self.cursor_row);
+                            self.cursor_row -= 1;
+                            self.cursor_col = self.lines[self.cursor_row].len();
+                            self.lines[self.cursor_row].push_str(&current);
                             self.modified = true;
                         }
                     }
+                    c if c >= ' ' && c <= '~' => {
+                        if self.lines[self.cursor_row].len() < 256 {
+                            if self.cursor_col <= self.lines[self.cursor_row].len() {
+                                self.lines[self.cursor_row].insert(self.cursor_col, c);
+                                self.cursor_col += 1;
+                                self.modified = true;
+                            }
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
-            },
+            }
             DecodedKey::RawKey(code) => match code {
                 KeyCode::F2 => {
                     self.save_file();
