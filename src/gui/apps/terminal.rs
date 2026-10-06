@@ -14,6 +14,7 @@ pub struct TerminalApp {
     current_input: String,
     cursor_visible: bool,
     blink_counter: usize,
+    pub cwd: String,
 }
 
 impl TerminalApp {
@@ -23,6 +24,7 @@ impl TerminalApp {
             current_input: String::new(),
             cursor_visible: true,
             blink_counter: 0,
+            cwd: String::from("/home/user"),
         };
 
         app.lines.push(String::from("Mouros Desktop OS Shell [Version 0.2.0]"));
@@ -33,61 +35,357 @@ impl TerminalApp {
 
     fn execute_command(&mut self) {
         let input = self.current_input.trim().to_string();
-        self.lines.push(format!("mouros> {}", input));
+        self.lines.push(format!("mouros:{}$ {}", self.cwd, input));
         self.current_input.clear();
 
-        if self.lines.len() > 150 {
-            self.lines.drain(0..30);
+        if self.lines.len() > 200 {
+            self.lines.drain(0..40);
         }
 
         if input.is_empty() {
             return;
         }
 
-        let mut parts = input.split_whitespace();
+        // Check for file redirection (> truncate or >> append)
+        let (cmd_part, redirect) = if let Some(pos) = input.find(">>") {
+            (input[..pos].trim(), Some((input[pos + 2..].trim(), true)))
+        } else if let Some(pos) = input.find('>') {
+            (input[..pos].trim(), Some((input[pos + 1..].trim(), false)))
+        } else {
+            (input.as_str(), None)
+        };
+
+        let mut parts = cmd_part.split_whitespace();
         let cmd = parts.next().unwrap_or("");
         let args: Vec<&str> = parts.collect();
 
+        if cmd == "clear" {
+            self.lines.clear();
+            return;
+        }
+
+        let mut out = Vec::new();
+        self.run_cmd(cmd, &args, &mut out);
+
+        if let Some((target_file, is_append)) = redirect {
+            if target_file.is_empty() {
+                self.lines.push(String::from("syntax error: expected filename after redirection"));
+            } else {
+                let target_path = crate::fs::resolve_relative_path(&self.cwd, target_file);
+                let text = out.join("\n") + "\n";
+                let res = if is_append {
+                    crate::fs::append(&target_path, text.as_bytes())
+                } else {
+                    crate::fs::write(&target_path, text.as_bytes())
+                };
+                if let Err(e) = res {
+                    self.lines.push(format!("redirection error: {:?}", e));
+                }
+            }
+        } else {
+            self.lines.extend(out);
+        }
+    }
+
+    fn run_cmd(&mut self, cmd: &str, args: &[&str], out: &mut Vec<String>) {
         match cmd {
             "help" => {
-                self.lines.push(String::from("Available commands:"));
-                self.lines.push(String::from("  help      - Show this help message"));
-                self.lines.push(String::from("  sysinfo   - Hardware & OS information"));
-                self.lines.push(String::from("  clear     - Clear terminal screen"));
-                self.lines.push(String::from("  echo <msg>- Print text to terminal"));
-                self.lines.push(String::from("  mem       - Show heap memory statistics"));
-                self.lines.push(String::from("  time      - Display CMOS real-time clock"));
-                self.lines.push(String::from("  calc <op> - Eval arithmetic (calc 42 * 7)"));
-                self.lines.push(String::from("  theme [nm]- Change desktop theme (cyberpunk, matrix, sunset)"));
-                self.lines.push(String::from("  elf [cmd] - Execute 64-bit ELF binaries (elf list/run)"));
-                self.lines.push(String::from("  mp3 [cmd] - MP3 audio player & decoder (mp3 list/info/decode)"));
-                self.lines.push(String::from("  doom [cmd]- DOOM 1993 engine (doom info/bench)"));
-                self.lines.push(String::from("  beep      - Test PC speaker sound"));
-                self.lines.push(String::from("  reboot    - Reboot the computer"));
+                out.push(String::from("Available commands:"));
+                out.push(String::from("  help      - Show this help message"));
+                out.push(String::from("  ls [-l]   - List directory entries"));
+                out.push(String::from("  cd [dir]  - Change working directory"));
+                out.push(String::from("  pwd       - Print working directory"));
+                out.push(String::from("  cat <f>   - Print file contents"));
+                out.push(String::from("  touch <f> - Create an empty file"));
+                out.push(String::from("  mkdir <d> - Create a directory"));
+                out.push(String::from("  rm <path> - Remove file or directory"));
+                out.push(String::from("  cp <s <d> - Copy file"));
+                out.push(String::from("  mv <s <d> - Move or rename file"));
+                out.push(String::from("  echo <t>  - Echo text (supports > and >> redirection)"));
+                out.push(String::from("  stat <f>  - Inode & file metadata"));
+                out.push(String::from("  df        - Disk space & inode usage"));
+                out.push(String::from("  sync      - Commit dirty blocks to disk"));
+                out.push(String::from("  uname     - Operating system info"));
+                out.push(String::from("  free      - Memory statistics"));
+                out.push(String::from("  sysinfo   - Hardware & OS summary"));
+                out.push(String::from("  clear     - Clear terminal screen"));
+                out.push(String::from("  mem       - Heap memory statistics"));
+                out.push(String::from("  time      - CMOS real-time clock"));
+                out.push(String::from("  calc <op> - Arithmetic evaluator"));
+                out.push(String::from("  theme [nm]- Change desktop theme"));
+                out.push(String::from("  elf [cmd] - Execute 64-bit ELF binaries"));
+                out.push(String::from("  mp3 [cmd] - MP3 audio player"));
+                out.push(String::from("  doom [cmd]- DOOM 1993 engine"));
+                out.push(String::from("  beep      - Test PC speaker sound"));
+                out.push(String::from("  reboot    - Reboot the computer"));
+                out.push(String::from("  shutdown  - Power off system"));
+            }
+            "pwd" => {
+                out.push(self.cwd.clone());
+            }
+            "cd" => {
+                let target = if args.is_empty() {
+                    String::from("/home/user")
+                } else {
+                    crate::fs::resolve_relative_path(&self.cwd, args[0])
+                };
+                if crate::fs::is_dir(&target) {
+                    self.cwd = target;
+                } else if crate::fs::exists(&target) {
+                    out.push(format!("cd: not a directory: {}", target));
+                } else {
+                    out.push(format!("cd: no such file or directory: {}", target));
+                }
+            }
+            "ls" => {
+                let mut long_format = false;
+                let mut target_arg = None;
+                for arg in args {
+                    if *arg == "-l" {
+                        long_format = true;
+                    } else if !arg.starts_with('-') {
+                        target_arg = Some(*arg);
+                    }
+                }
+                let target = match target_arg {
+                    Some(p) => crate::fs::resolve_relative_path(&self.cwd, p),
+                    None => self.cwd.clone(),
+                };
+
+                match crate::fs::read_dir(&target) {
+                    Ok(entries) => {
+                        if entries.is_empty() {
+                            out.push(String::from("(empty directory)"));
+                        } else if long_format {
+                            out.push(format!("total {}", entries.len()));
+                            for e in entries {
+                                let full_path = if target == "/" {
+                                    format!("/{}", e.name)
+                                } else {
+                                    format!("{}/{}", target, e.name)
+                                };
+                                let (mode_str, size_str) = match crate::fs::stat(&full_path) {
+                                    Ok(st) => {
+                                        let type_ch = if st.file_type == 2 { 'd' } else { '-' };
+                                        let p = st.permissions;
+                                        let rwx = format!(
+                                            "{}{}{}{}{}{}{}{}{}",
+                                            if p & 0o400 != 0 { 'r' } else { '-' },
+                                            if p & 0o200 != 0 { 'w' } else { '-' },
+                                            if p & 0o100 != 0 { 'x' } else { '-' },
+                                            if p & 0o040 != 0 { 'r' } else { '-' },
+                                            if p & 0o020 != 0 { 'w' } else { '-' },
+                                            if p & 0o010 != 0 { 'x' } else { '-' },
+                                            if p & 0o004 != 0 { 'r' } else { '-' },
+                                            if p & 0o002 != 0 { 'w' } else { '-' },
+                                            if p & 0o001 != 0 { 'x' } else { '-' },
+                                        );
+                                        (format!("{}{}", type_ch, rwx), format!("{:>6}", st.size))
+                                    }
+                                    Err(_) => (String::from("?---------"), String::from("     0")),
+                                };
+                                out.push(format!("{}  {}  {}", mode_str, size_str, e.name));
+                            }
+                        } else {
+                            let mut line = String::new();
+                            for e in entries {
+                                let suffix = if e.file_type == 2 { "/" } else { "" };
+                                line.push_str(&format!("{}{:<18} ", e.name, suffix));
+                                if line.len() >= 60 {
+                                    out.push(line);
+                                    line = String::new();
+                                }
+                            }
+                            if !line.is_empty() {
+                                out.push(line);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        out.push(format!("ls: cannot access '{}': {:?}", target, e));
+                    }
+                }
+            }
+            "cat" => {
+                if args.is_empty() {
+                    out.push(String::from("Usage: cat <filename>"));
+                } else {
+                    for filename in args {
+                        let target = crate::fs::resolve_relative_path(&self.cwd, filename);
+                        match crate::fs::read(&target) {
+                            Ok(bytes) => {
+                                if let Ok(s) = core::str::from_utf8(&bytes) {
+                                    for line in s.lines() {
+                                        out.push(String::from(line));
+                                    }
+                                } else {
+                                    out.push(format!("[Binary data: {} bytes]", bytes.len()));
+                                }
+                            }
+                            Err(e) => {
+                                out.push(format!("cat: {}: {:?}", filename, e));
+                            }
+                        }
+                    }
+                }
+            }
+            "touch" => {
+                if args.is_empty() {
+                    out.push(String::from("Usage: touch <filename>"));
+                } else {
+                    for filename in args {
+                        let target = crate::fs::resolve_relative_path(&self.cwd, filename);
+                        if crate::fs::exists(&target) {
+                            let _ = crate::fs::append(&target, b"");
+                        } else {
+                            match crate::fs::create_file(&target, 0o644) {
+                                Ok(_) => out.push(format!("Created {}", filename)),
+                                Err(e) => out.push(format!("touch: failed to create '{}': {:?}", filename, e)),
+                            }
+                        }
+                    }
+                }
+            }
+            "mkdir" => {
+                if args.is_empty() {
+                    out.push(String::from("Usage: mkdir <dirname>"));
+                } else {
+                    for dirname in args {
+                        let target = crate::fs::resolve_relative_path(&self.cwd, dirname);
+                        match crate::fs::mkdir(&target) {
+                            Ok(_) => out.push(format!("Created directory {}", dirname)),
+                            Err(e) => out.push(format!("mkdir: failed to create '{}': {:?}", dirname, e)),
+                        }
+                    }
+                }
+            }
+            "rm" => {
+                if args.is_empty() {
+                    out.push(String::from("Usage: rm <filename/dir>"));
+                } else {
+                    for path in args {
+                        let target = crate::fs::resolve_relative_path(&self.cwd, path);
+                        match crate::fs::remove(&target) {
+                            Ok(_) => out.push(format!("Removed {}", path)),
+                            Err(e) => out.push(format!("rm: cannot remove '{}': {:?}", path, e)),
+                        }
+                    }
+                }
+            }
+            "cp" => {
+                if args.len() < 2 {
+                    out.push(String::from("Usage: cp <source> <destination>"));
+                } else {
+                    let src = crate::fs::resolve_relative_path(&self.cwd, args[0]);
+                    let dst = crate::fs::resolve_relative_path(&self.cwd, args[1]);
+                    match crate::fs::copy(&src, &dst) {
+                        Ok(_) => out.push(format!("Copied {} -> {}", args[0], args[1])),
+                        Err(e) => out.push(format!("cp: error: {:?}", e)),
+                    }
+                }
+            }
+            "mv" => {
+                if args.len() < 2 {
+                    out.push(String::from("Usage: mv <source> <destination>"));
+                } else {
+                    let src = crate::fs::resolve_relative_path(&self.cwd, args[0]);
+                    let dst = crate::fs::resolve_relative_path(&self.cwd, args[1]);
+                    match crate::fs::rename(&src, &dst) {
+                        Ok(_) => out.push(format!("Moved {} -> {}", args[0], args[1])),
+                        Err(e) => out.push(format!("mv: error: {:?}", e)),
+                    }
+                }
+            }
+            "echo" => {
+                let msg = args.join(" ");
+                out.push(msg);
+            }
+            "stat" => {
+                if args.is_empty() {
+                    out.push(String::from("Usage: stat <filename>"));
+                } else {
+                    let target = crate::fs::resolve_relative_path(&self.cwd, args[0]);
+                    match crate::fs::stat(&target) {
+                        Ok(st) => {
+                            out.push(format!("  File: {}", target));
+                            out.push(format!("  Size: {:<8} Inode: {:<6} Blocks: {}", st.size, st.inode, st.block_count));
+                            let type_str = match st.file_type {
+                                1 => "regular file",
+                                2 => "directory",
+                                3 => "character device",
+                                _ => "unknown",
+                            };
+                            out.push(format!("  Type: {:<14} Mode: (0{:o})", type_str, st.permissions));
+                            out.push(format!("  Uid:  ( {:<4} )   Gid:  ( {:<4} )", st.uid, st.gid));
+                        }
+                        Err(e) => out.push(format!("stat: cannot stat '{}': {:?}", target, e)),
+                    }
+                }
+            }
+            "df" => {
+                match crate::fs::disk_usage() {
+                    Ok((total_b, free_b, total_in, free_in)) => {
+                        let used_b = total_b.saturating_sub(free_b);
+                        let total_kb = total_b;
+                        let used_kb = used_b;
+                        let free_kb = free_b;
+                        let pct = if total_b > 0 { (used_b * 100) / total_b } else { 0 };
+                        out.push(String::from("Filesystem      1K-blocks      Used Available Use% Inodes"));
+                        out.push(format!(
+                            "/dev/sda        {:<14} {:<9} {:<9} {:>3}% {}/{}",
+                            total_kb, used_kb, free_kb, pct, total_in.saturating_sub(free_in), total_in
+                        ));
+                    }
+                    Err(e) => out.push(format!("df: error: {:?}", e)),
+                }
+            }
+            "sync" => {
+                match crate::fs::sync() {
+                    Ok(_) => out.push(String::from("Dirty blocks synced to storage media.")),
+                    Err(e) => out.push(format!("sync: error: {:?}", e)),
+                }
+            }
+            "uname" => {
+                out.push(String::from("Mouros 0.2.0 x86_64 Long Mode Bare-Metal"));
+            }
+            "free" => {
+                let mem_info = crate::memory::get_system_memory_info();
+                let (heap_used, heap_total) = crate::allocator::heap_stats();
+                let total_mb = mem_info.total_ram_bytes / (1024 * 1024);
+                let free_mb = (mem_info.total_ram_bytes.saturating_sub(heap_used as u64)) / (1024 * 1024);
+                let heap_mb = heap_total / (1024 * 1024);
+                let used_mb = heap_used / (1024 * 1024);
+                out.push(format!("              total        used        free"));
+                out.push(format!("Mem:       {:>6} MB   {:>6} MB   {:>6} MB", total_mb, used_mb, free_mb));
+                out.push(format!("Heap:      {:>6} MB   {:>6} MB   {:>6} MB", heap_mb, used_mb, heap_mb - used_mb));
+            }
+            "shutdown" => {
+                out.push(String::from("Shutting down Mouros..."));
+                unsafe {
+                    // QEMU exit port
+                    let mut port = Port::new(0xf4);
+                    port.write(0x10u32);
+                    // Bochs / QEMU ACPI shutdown port
+                    let mut acpi_port = Port::new(0x604);
+                    acpi_port.write(0x2000u16);
+                }
             }
             "sysinfo" | "neofetch" => {
-                self.lines.push(String::from("   __  __"));
-                self.lines.push(String::from("  |  \\/  | ___  _   _ _ __ ___  ___"));
-                self.lines.push(String::from("  | |\\/| |/ _ \\| | | | '__/ _ \\/ __|"));
-                self.lines.push(String::from("  | |  | | (_) | |_| | | | (_) \\__ \\"));
-                self.lines.push(String::from("  |_|  |_|\\___/ \\__,_|_|  \\___/|___/"));
-                self.lines.push(String::from("  ---------------------------------"));
-                self.lines.push(String::from("  OS: Mouros Desktop OS (x86_64)"));
-                self.lines.push(String::from("  Kernel: Rust bare-metal Long Mode"));
-                self.lines.push(String::from("  Display: Bochs BGA (800x600 32bpp)"));
-                self.lines.push(String::from("  Window Manager: Mouros Compositor"));
+                out.push(String::from("   __  __"));
+                out.push(String::from("  |  \\/  | ___  _   _ _ __ ___  ___"));
+                out.push(String::from("  | |\\/| |/ _ \\| | | | '__/ _ \\/ __|"));
+                out.push(String::from("  | |  | | (_) | |_| | | | (_) \\__ \\"));
+                out.push(String::from("  |_|  |_|\\___/ \\__,_|_|  \\___/|___/"));
+                out.push(String::from("  ---------------------------------"));
+                out.push(String::from("  OS: Mouros Desktop OS (x86_64)"));
+                out.push(String::from("  Kernel: Rust bare-metal Long Mode"));
+                out.push(String::from("  Display: Bochs BGA (800x600 32bpp)"));
+                out.push(String::from("  Window Manager: Mouros Compositor"));
                 let mem_info = crate::memory::get_system_memory_info();
                 let (_, heap_total) = crate::allocator::heap_stats();
                 let total_mb = mem_info.total_ram_bytes / (1024 * 1024);
                 let heap_mb = heap_total / (1024 * 1024);
-                self.lines.push(format!("  RAM: {} MiB (Physical) | Heap: {} MiB", total_mb, heap_mb));
-            }
-            "clear" => {
-                self.lines.clear();
-            }
-            "echo" => {
-                let msg = args.join(" ");
-                self.lines.push(msg);
+                out.push(format!("  RAM: {} MiB (Physical) | Heap: {} MiB", total_mb, heap_mb));
             }
             "mem" => {
                 let mem_info = crate::memory::get_system_memory_info();
@@ -98,16 +396,16 @@ impl TerminalApp {
                 let used_mb = heap_used / (1024 * 1024);
                 let used_dec = ((heap_used % (1024 * 1024)) * 10) / (1024 * 1024);
 
-                self.lines.push(String::from("System Memory Statistics:"));
+                out.push(String::from("System Memory Statistics:"));
                 if total_mb >= 1024 {
-                    self.lines.push(format!("  Physical RAM (QEMU): {} MiB ({}.{} GiB)", total_mb, total_mb / 1024, ((total_mb % 1024) * 10) / 1024));
+                    out.push(format!("  Physical RAM (QEMU): {} MiB ({}.{} GiB)", total_mb, total_mb / 1024, ((total_mb % 1024) * 10) / 1024));
                 } else {
-                    self.lines.push(format!("  Physical RAM (QEMU): {} MiB", total_mb));
+                    out.push(format!("  Physical RAM (QEMU): {} MiB", total_mb));
                 }
-                self.lines.push(format!("  Usable Physical RAM: {} MiB", usable_mb));
-                self.lines.push(format!("  Kernel Heap Total:   {} MiB", heap_mb));
-                self.lines.push(format!("  Kernel Heap Used:    {}.{} MiB", used_mb, used_dec));
-                self.lines.push(String::from("  Heap Base Virtual:   0x444444440000"));
+                out.push(format!("  Usable Physical RAM: {} MiB", usable_mb));
+                out.push(format!("  Kernel Heap Total:   {} MiB", heap_mb));
+                out.push(format!("  Kernel Heap Used:    {}.{} MiB", used_mb, used_dec));
+                out.push(String::from("  Heap Base Virtual:   0x444444440000"));
             }
             "time" => {
                 let t = rtc::read_time();
@@ -412,7 +710,7 @@ impl Application for TerminalApp {
         let max_chars = (client_w.saturating_sub(padding as usize * 2)) / FONT_WIDTH;
 
         for line in &self.lines[start_idx..] {
-            let color = if line.starts_with("mouros>") {
+            let color = if line.starts_with("mouros:") || line.starts_with("mouros>") {
                 Color::from_rgb(56, 189, 248) // light sky blue
             } else if line.starts_with("Error") || line.starts_with("Unknown") {
                 Color::from_rgb(248, 113, 113) // light red
@@ -432,11 +730,11 @@ impl Application for TerminalApp {
         }
 
         // Draw current prompt
-        let prompt_prefix = "mouros> ";
+        let prompt_prefix = format!("mouros:{}$ ", self.cwd);
         fb.draw_string(
             client_x + padding,
             current_y,
-            prompt_prefix,
+            &prompt_prefix,
             Color::from_rgb(56, 189, 248),
         );
 

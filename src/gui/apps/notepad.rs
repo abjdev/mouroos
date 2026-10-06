@@ -13,29 +13,71 @@ pub struct NotepadApp {
     cursor_col: usize,
     cursor_visible: bool,
     blink_counter: usize,
+    pub current_file: String,
+    pub modified: bool,
+    pub status_msg: Option<(String, usize)>,
 }
 
 impl NotepadApp {
     pub fn new() -> Self {
+        Self::open_file("/home/user/notes.txt")
+    }
+
+    pub fn open_file(path: &str) -> Self {
         let mut lines = Vec::new();
-        lines.push(String::from("Welcome to Mouros OS!"));
-        lines.push(String::from("--------------------"));
-        lines.push(String::from("Graphical text editor"));
-        lines.push(String::from("built on bare-metal Rust."));
-        lines.push(String::new());
-        lines.push(String::from("Features:"));
-        lines.push(String::from(" * Interactive typing"));
-        lines.push(String::from(" * Arrow navigation"));
-        lines.push(String::from(" * Multiline buffer"));
-        lines.push(String::new());
-        lines.push(String::from("Try editing this text!"));
+        let current_file = String::from(path);
+
+        if let Ok(bytes) = crate::fs::read(path) {
+            if let Ok(text) = core::str::from_utf8(&bytes) {
+                for l in text.lines() {
+                    lines.push(String::from(l));
+                }
+            }
+        }
+
+        if lines.is_empty() {
+            lines.push(String::from("Welcome to Mouros OS!"));
+            lines.push(String::from("--------------------"));
+            lines.push(String::from("Graphical text editor"));
+            lines.push(String::from("built on bare-metal Rust."));
+            lines.push(String::new());
+            lines.push(String::from("Press F2 or Ctrl+S to save!"));
+        }
+
+        let cursor_row = lines.len().saturating_sub(1);
+        let cursor_col = lines.last().map(|l| l.len()).unwrap_or(0);
 
         NotepadApp {
             lines,
-            cursor_row: 10,
-            cursor_col: 22,
+            cursor_row,
+            cursor_col,
             cursor_visible: true,
             blink_counter: 0,
+            current_file,
+            modified: false,
+            status_msg: None,
+        }
+    }
+
+    pub fn save_file(&mut self) -> bool {
+        let mut text = String::new();
+        for (i, line) in self.lines.iter().enumerate() {
+            text.push_str(line);
+            if i + 1 < self.lines.len() || !line.is_empty() {
+                text.push('\n');
+            }
+        }
+        match crate::fs::write(&self.current_file, text.as_bytes()) {
+            Ok(_) => {
+                let _ = crate::fs::sync();
+                self.modified = false;
+                self.status_msg = Some((String::from("Saved"), 60));
+                true
+            }
+            Err(_) => {
+                self.status_msg = Some((String::from("Save Error"), 90));
+                false
+            }
         }
     }
 }
@@ -92,6 +134,28 @@ impl Application for NotepadApp {
         let status_y = client_y + text_h as isize;
         fb.fill_rect(client_x, status_y, client_w, status_h, Color::RETRO_FACE);
         fb.fill_rect(client_x, status_y, client_w, 1, Color::RETRO_LIGHT);
+
+        // Left status panel: file name & save indicator
+        let right_panel_w = 110;
+        let left_panel_w = client_w.saturating_sub(right_panel_w + 6);
+        fb.draw_sunken_panel(client_x + 2, status_y + 2, left_panel_w, 18);
+
+        let file_status = if let Some((msg, _)) = &self.status_msg {
+            format!("{} [{}]", self.current_file, msg)
+        } else if self.modified {
+            format!("{}*", self.current_file)
+        } else {
+            self.current_file.clone()
+        };
+        let max_left_chars = left_panel_w.saturating_sub(8) / FONT_WIDTH;
+        let disp_status = if file_status.len() > max_left_chars {
+            &file_status[..max_left_chars]
+        } else {
+            &file_status
+        };
+        fb.draw_string(client_x + 6, status_y + 3, disp_status, Color::BLACK);
+
+        // Right status panel: Ln / Col
         fb.draw_sunken_panel(client_x + client_w as isize - 110, status_y + 2, 106, 18);
         let status_str = format!("Ln {}, Col {}", self.cursor_row + 1, self.cursor_col + 1);
         fb.draw_string(client_x + client_w as isize - 104, status_y + 3, &status_str, Color::BLACK);
@@ -106,6 +170,10 @@ impl Application for NotepadApp {
 
         match key {
             DecodedKey::Unicode(c) => match c {
+                '\x13' => {
+                    // Ctrl+S: Save file
+                    self.save_file();
+                }
                 '\n' | '\r' => {
                     if self.lines.len() < 500 {
                         let current_line = &self.lines[self.cursor_row];
@@ -118,6 +186,7 @@ impl Application for NotepadApp {
                         self.cursor_row += 1;
                         self.cursor_col = 0;
                         self.lines.insert(self.cursor_row, rest);
+                        self.modified = true;
                     }
                 }
                 '\u{0008}' => {
@@ -126,12 +195,14 @@ impl Application for NotepadApp {
                         self.cursor_col -= 1;
                         if self.cursor_col < self.lines[self.cursor_row].len() {
                             self.lines[self.cursor_row].remove(self.cursor_col);
+                            self.modified = true;
                         }
                     } else if self.cursor_row > 0 {
                         let current = self.lines.remove(self.cursor_row);
                         self.cursor_row -= 1;
                         self.cursor_col = self.lines[self.cursor_row].len();
                         self.lines[self.cursor_row].push_str(&current);
+                        self.modified = true;
                     }
                 }
                 c if c >= ' ' && c <= '~' => {
@@ -139,12 +210,16 @@ impl Application for NotepadApp {
                         if self.cursor_col <= self.lines[self.cursor_row].len() {
                             self.lines[self.cursor_row].insert(self.cursor_col, c);
                             self.cursor_col += 1;
+                            self.modified = true;
                         }
                     }
                 }
                 _ => {}
             },
             DecodedKey::RawKey(code) => match code {
+                KeyCode::F2 => {
+                    self.save_file();
+                }
                 KeyCode::ArrowLeft => {
                     if self.cursor_col > 0 {
                         self.cursor_col -= 1;
@@ -175,6 +250,14 @@ impl Application for NotepadApp {
     fn on_mouse_click(&mut self, _local_x: isize, _local_y: isize, _left: bool) {}
 
     fn on_tick(&mut self) -> bool {
+        if let Some((_, ref mut count)) = self.status_msg {
+            if *count > 0 {
+                *count -= 1;
+            } else {
+                self.status_msg = None;
+            }
+        }
+
         self.blink_counter += 1;
         if self.blink_counter >= 40 {
             self.blink_counter = 0;

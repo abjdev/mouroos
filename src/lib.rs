@@ -11,6 +11,7 @@ use core::panic::PanicInfo;
 pub mod allocator;
 pub mod drivers;
 pub mod elf;
+pub mod fs;
 pub mod gdt;
 pub mod gui;
 pub mod interrupts;

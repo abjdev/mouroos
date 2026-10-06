@@ -16,7 +16,7 @@ entry_point!(kernel_main);
 
 fn kernel_main(boot_info: &'static BootInfo) -> ! {
     use mouros::allocator;
-    use mouros::drivers::{ac97, bga, mouse};
+    use mouros::drivers::{ac97, ata, bga, mouse};
     use mouros::gui::{self, Desktop, Framebuffer, run_desktop};
     use mouros::memory::{self, BootInfoFrameAllocator};
     use x86_64::VirtAddr;
@@ -66,6 +66,10 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     // Initialize PS/2 Mouse
     mouse::init(bga::DEFAULT_WIDTH as isize, bga::DEFAULT_HEIGHT as isize);
+
+    // Initialize ATA Storage Controller & Persistent VFS
+    ata::init();
+    mouros::fs::init();
 
     let mut fb = Framebuffer::new(bga_device);
 
