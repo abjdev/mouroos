@@ -71,6 +71,10 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     ata::init();
     mouros::fs::init();
 
+    // Initialize Process Management & System Calls
+    mouros::process::init();
+    mouros::syscall::init();
+
     let mut fb = Framebuffer::new(bga_device);
 
     // Show system welcome screen before launching desktop

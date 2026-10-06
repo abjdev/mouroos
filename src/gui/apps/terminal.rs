@@ -55,9 +55,19 @@ impl TerminalApp {
             (input.as_str(), None)
         };
 
+        // Check for background operator (&)
+        let (cmd_part, is_bg) = if cmd_part.ends_with('&') {
+            (cmd_part[..cmd_part.len() - 1].trim(), true)
+        } else {
+            (cmd_part, false)
+        };
+
         let mut parts = cmd_part.split_whitespace();
         let cmd = parts.next().unwrap_or("");
-        let args: Vec<&str> = parts.collect();
+        let mut args: Vec<&str> = parts.collect();
+        if is_bg {
+            args.push("&");
+        }
 
         if cmd == "clear" {
             self.lines.clear();
@@ -105,6 +115,10 @@ impl TerminalApp {
                 out.push(String::from("  stat <f>  - Inode & file metadata"));
                 out.push(String::from("  df        - Disk space & inode usage"));
                 out.push(String::from("  sync      - Commit dirty blocks to disk"));
+                out.push(String::from("  ps        - List process table"));
+                out.push(String::from("  kill <pid>- Terminate process (SIGTERM/SIGKILL)"));
+                out.push(String::from("  wait <pid>- Wait for process termination"));
+                out.push(String::from("  top       - Real-time task & CPU monitor"));
                 out.push(String::from("  uname     - Operating system info"));
                 out.push(String::from("  free      - Memory statistics"));
                 out.push(String::from("  sysinfo   - Hardware & OS summary"));
@@ -113,12 +127,82 @@ impl TerminalApp {
                 out.push(String::from("  time      - CMOS real-time clock"));
                 out.push(String::from("  calc <op> - Arithmetic evaluator"));
                 out.push(String::from("  theme [nm]- Change desktop theme"));
-                out.push(String::from("  elf [cmd] - Execute 64-bit ELF binaries"));
+                out.push(String::from("  elf [cmd] - Execute 64-bit ELF binaries (supports &)"));
                 out.push(String::from("  mp3 [cmd] - MP3 audio player"));
                 out.push(String::from("  doom [cmd]- DOOM 1993 engine"));
                 out.push(String::from("  beep      - Test PC speaker sound"));
                 out.push(String::from("  reboot    - Reboot the computer"));
                 out.push(String::from("  shutdown  - Power off system"));
+            }
+            "ps" => {
+                out.push(String::from("  PID  PPID STATE        TIME   MEM (KB) CMD"));
+                let procs = crate::process::list_processes();
+                for p in procs {
+                    let time_s = p.cpu_ticks / 100;
+                    let mem_kb = p.memory_bytes / 1024;
+                    out.push(format!(
+                        " {:>4} {:>5} {:<10} {:>5}s {:>9} {}",
+                        p.pid, p.ppid, p.state_str, time_s, mem_kb, p.name
+                    ));
+                }
+            }
+            "kill" => {
+                if args.is_empty() {
+                    out.push(String::from("Usage: kill [-<sig>] <pid>"));
+                } else {
+                    let (sig, pid_str) = if args[0].starts_with('-') && args.len() >= 2 {
+                        let s = args[0][1..].parse::<i32>().unwrap_or(9);
+                        (s, args[1])
+                    } else {
+                        (15, args[0])
+                    };
+
+                    match pid_str.parse::<u32>() {
+                        Ok(p) => {
+                            match crate::process::kill(crate::process::Pid(p), sig) {
+                                Ok(_) => out.push(format!("Process {} terminated with signal {}", p, sig)),
+                                Err(e) => out.push(format!("kill: {}: {}", p, e)),
+                            }
+                        }
+                        Err(_) => out.push(format!("kill: invalid PID '{}'", pid_str)),
+                    }
+                }
+            }
+            "wait" => {
+                if args.is_empty() {
+                    out.push(String::from("Usage: wait <pid>"));
+                } else {
+                    match args[0].parse::<u32>() {
+                        Ok(p) => {
+                            match crate::process::waitpid(crate::process::Pid(p)) {
+                                Some(code) => out.push(format!("Process {} reaped with exit code {}", p, code)),
+                                None => {
+                                    if crate::process::is_terminated(crate::process::Pid(p)) {
+                                        out.push(format!("Process {} has terminated.", p));
+                                    } else {
+                                        out.push(format!("Process {} is still running.", p));
+                                    }
+                                }
+                            }
+                        }
+                        Err(_) => out.push(format!("wait: invalid PID '{}'", args[0])),
+                    }
+                }
+            }
+            "top" => {
+                let procs = crate::process::list_processes();
+                let active = procs.iter().filter(|p| p.state_str == "RUNNING" || p.state_str == "READY").count();
+                let uptime_ticks = crate::interrupts::TICKS.load(core::sync::atomic::Ordering::Relaxed);
+                out.push(format!("Mouros Top: uptime {}s, {} total tasks, {} active", uptime_ticks / 100, procs.len(), active));
+                out.push(String::from("  PID  PPID STATE        TIME   MEM (KB) CMD"));
+                for p in procs {
+                    let time_s = p.cpu_ticks / 100;
+                    let mem_kb = p.memory_bytes / 1024;
+                    out.push(format!(
+                        " {:>4} {:>5} {:<10} {:>5}s {:>9} {}",
+                        p.pid, p.ppid, p.state_str, time_s, mem_kb, p.name
+                    ));
+                }
             }
             "pwd" => {
                 out.push(self.cwd.clone());
@@ -474,12 +558,12 @@ impl TerminalApp {
             }
             "elf" => {
                 if args.is_empty() || args[0] == "list" {
-                    self.lines.push(String::from("Available 64-bit ELF Executables:"));
-                    self.lines.push(String::from("  hello.elf      - Host greeting & C API print test"));
-                    self.lines.push(String::from("  fibonacci.elf  - Fibonacci sequence generator"));
-                    self.lines.push(String::from("  mandelbrot.elf - ASCII Mandelbrot fractal renderer"));
-                    self.lines.push(String::from("  sysbench.elf   - CPU & memory speed benchmark"));
-                    self.lines.push(String::from("Usage: elf run <name>"));
+                    out.push(String::from("Available 64-bit ELF Executables:"));
+                    out.push(String::from("  hello.elf      - Host greeting & C API print test"));
+                    out.push(String::from("  fibonacci.elf  - Fibonacci sequence generator"));
+                    out.push(String::from("  mandelbrot.elf - ASCII Mandelbrot fractal renderer"));
+                    out.push(String::from("  sysbench.elf   - CPU & memory speed benchmark"));
+                    out.push(String::from("Usage: elf run <name> [&]"));
                 } else if args[0] == "run" && args.len() >= 2 {
                     let elf_bytes: Option<&[u8]> = match args[1] {
                         "hello" | "hello.elf" => Some(include_bytes!("../../../samples/hello.elf")),
@@ -489,23 +573,29 @@ impl TerminalApp {
                         _ => None,
                     };
                     if let Some(bytes) = elf_bytes {
-                        self.lines.push(format!(">>> Executing userspace ELF '{}' ({} bytes)...", args[1], bytes.len()));
-                        match crate::elf::execute_elf(bytes) {
+                        let is_bg = args.len() >= 3 && args[2] == "&";
+                        let proc_name = args[1];
+                        match crate::elf::execute_elf_process(proc_name, bytes, is_bg) {
                             Ok(res) => {
-                                for l in res.output.lines() {
-                                    self.lines.push(String::from(l));
+                                if is_bg {
+                                    out.push(format!("[1] {} (PID {}) started in background", proc_name, res.pid));
+                                } else {
+                                    out.push(format!(">>> Executing userspace ELF '{}' (PID {}, {} bytes)...", proc_name, res.pid, bytes.len()));
+                                    for l in res.output.lines() {
+                                        out.push(String::from(l));
+                                    }
+                                    out.push(format!(">>> Process {} exited with code {}", res.pid, res.exit_code));
                                 }
-                                self.lines.push(format!(">>> Process exited with code {}", res.exit_code));
                             }
                             Err(e) => {
-                                self.lines.push(format!(">>> ELF execution error: {}", e));
+                                out.push(format!(">>> ELF execution error: {}", e));
                             }
                         }
                     } else {
-                        self.lines.push(format!("ELF binary not found: '{}'. Run 'elf list' for available binaries.", args[1]));
+                        out.push(format!("ELF binary not found: '{}'. Run 'elf list' for available binaries.", args[1]));
                     }
                 } else {
-                    self.lines.push(String::from("Usage: elf list | elf run <name>"));
+                    out.push(String::from("Usage: elf list | elf run <name> [&]"));
                 }
             }
             "mp3" => {

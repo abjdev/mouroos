@@ -8,6 +8,7 @@ pub struct MourosApi {
     pub print_fn: extern "C" fn(ptr: *const u8, len: usize),
     pub get_ticks_fn: extern "C" fn() -> u64,
     pub get_memory_fn: extern "C" fn(total_ram: *mut u64, heap_used: *mut u64),
+    pub syscall_fn: extern "C" fn(id: usize, a0: usize, a1: usize, a2: usize) -> isize,
 }
 
 static OUTPUT_BUFFER: Mutex<Option<String>> = Mutex::new(None);
@@ -39,13 +40,26 @@ extern "C" fn api_get_memory(total_ram: *mut u64, heap_used: *mut u64) {
     }
 }
 
+extern "C" fn api_syscall(id: usize, a0: usize, a1: usize, a2: usize) -> isize {
+    crate::syscall::dispatch(id, [a0, a1, a2, 0, 0, 0])
+}
+
 #[derive(Debug)]
 pub struct ProcessResult {
+    pub pid: u32,
     pub exit_code: i32,
     pub output: String,
 }
 
 pub fn execute_elf(elf_bytes: &[u8]) -> Result<ProcessResult, &'static str> {
+    execute_elf_process("elf_task", elf_bytes, false)
+}
+
+pub fn execute_elf_process(
+    name: &str,
+    elf_bytes: &[u8],
+    background: bool,
+) -> Result<ProcessResult, &'static str> {
     if elf_bytes.len() < 64 {
         return Err("ELF file too small");
     }
@@ -144,18 +158,34 @@ pub fn execute_elf(elf_bytes: &[u8]) -> Result<ProcessResult, &'static str> {
         core::mem::transmute(entry_fn_ptr)
     };
 
+    let pid = crate::process::spawn(name, Some(crate::process::current_pid()), 10, total_size, background);
+    crate::process::PROCESS_TABLE.lock().set_state(pid, crate::process::ProcessState::Running);
+
     let api = MourosApi {
         print_fn: api_print,
         get_ticks_fn: api_get_ticks,
         get_memory_fn: api_get_memory,
+        syscall_fn: api_syscall,
     };
 
     // 6. Execute process
     *OUTPUT_BUFFER.lock() = Some(String::new());
+    let start_tick = crate::interrupts::TICKS.load(Ordering::Relaxed);
 
     let exit_code = entry_fn(&api);
 
+    let end_tick = crate::interrupts::TICKS.load(Ordering::Relaxed);
+    let elapsed = end_tick.saturating_sub(start_tick);
+    if let Some(p) = crate::process::PROCESS_TABLE.lock().get_mut(pid) {
+        p.cpu_ticks += elapsed;
+    }
+    crate::process::terminate(pid, exit_code);
+
     let output = OUTPUT_BUFFER.lock().take().unwrap_or_default();
 
-    Ok(ProcessResult { exit_code, output })
+    Ok(ProcessResult {
+        pid: pid.0,
+        exit_code,
+        output,
+    })
 }

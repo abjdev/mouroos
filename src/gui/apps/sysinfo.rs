@@ -130,10 +130,12 @@ impl Application for SysInfoApp {
 
         y += bar_height as isize + 10;
 
-        // Live Uptime & RTC Clock
+        // Live Uptime & Process count & RTC Clock
         let ticks = TICKS.load(Ordering::Relaxed);
         let seconds = ticks / 100;
-        let uptime_str = format!("Uptime: {}s", seconds);
+        let procs = crate::process::list_processes();
+        let active = procs.iter().filter(|p| p.state_str == "RUNNING" || p.state_str == "READY").count();
+        let uptime_str = format!("Uptime: {}s | Tasks: {} active / {} total", seconds, active, procs.len());
         fb.draw_string(client_x + padding, y, &uptime_str, Color::BLACK);
 
         let time = rtc::read_time();

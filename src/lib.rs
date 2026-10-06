@@ -17,7 +17,9 @@ pub mod gui;
 pub mod interrupts;
 pub mod memory;
 pub mod mp3;
+pub mod process;
 pub mod serial;
+pub mod syscall;
 pub mod task;
 pub mod vga_buffer;
 

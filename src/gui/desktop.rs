@@ -867,6 +867,7 @@ pub async fn run_desktop(mut desktop: Desktop) {
         if current_tick != last_tick {
             let elapsed = (current_tick - last_tick).min(10);
             last_tick = current_tick;
+            crate::process::schedule_tick(current_tick);
             for _ in 0..elapsed {
                 if desktop.on_tick() {
                     full_render = true;
