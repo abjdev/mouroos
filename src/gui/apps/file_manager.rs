@@ -15,6 +15,41 @@ pub struct FileEntry {
     pub inode: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextMenuTarget {
+    Item(usize),
+    EmptyArea,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextMenuAction {
+    Open,
+    Copy,
+    Paste,
+    Delete,
+    Rename,
+    NewFile,
+    NewFolder,
+    Refresh,
+    Properties,
+}
+
+#[derive(Debug, Clone)]
+pub struct ContextMenuItem {
+    pub label: &'static str,
+    pub is_separator: bool,
+    pub action: ContextMenuAction,
+}
+
+#[derive(Debug, Clone)]
+pub struct ContextMenuState {
+    pub x: isize,
+    pub y: isize,
+    pub width: usize,
+    pub target: ContextMenuTarget,
+    pub items: Vec<ContextMenuItem>,
+}
+
 pub struct FileManagerApp {
     pub current_path: String,
     pub history: Vec<String>,
@@ -30,6 +65,11 @@ pub struct FileManagerApp {
     pub pending_action: Option<DesktopAction>,
     pub new_file_counter: usize,
     pub new_folder_counter: usize,
+    pub context_menu: Option<ContextMenuState>,
+    pub rename_dialog: Option<(usize, String)>,
+    pub ctrl_pressed: bool,
+    pub last_w: usize,
+    pub last_h: usize,
 }
 
 impl FileManagerApp {
@@ -53,6 +93,11 @@ impl FileManagerApp {
             pending_action: None,
             new_file_counter: 1,
             new_folder_counter: 1,
+            context_menu: None,
+            rename_dialog: None,
+            ctrl_pressed: false,
+            last_w: 580,
+            last_h: 380,
         };
         app.refresh();
         app
@@ -122,6 +167,8 @@ impl FileManagerApp {
         self.history_idx = self.history.len() - 1;
         self.selected_idx = None;
         self.scroll_offset = 0;
+        self.context_menu = None;
+        self.rename_dialog = None;
         self.refresh();
     }
 
@@ -131,6 +178,8 @@ impl FileManagerApp {
             self.current_path = self.history[self.history_idx].clone();
             self.selected_idx = None;
             self.scroll_offset = 0;
+            self.context_menu = None;
+            self.rename_dialog = None;
             self.refresh();
         }
     }
@@ -141,6 +190,8 @@ impl FileManagerApp {
             self.current_path = self.history[self.history_idx].clone();
             self.selected_idx = None;
             self.scroll_offset = 0;
+            self.context_menu = None;
+            self.rename_dialog = None;
             self.refresh();
         }
     }
@@ -170,7 +221,6 @@ impl FileManagerApp {
             let _ = crate::fs::sync();
             self.status_msg = Some((format!("Created {}", file_name), 40));
             self.refresh();
-            // Select created file
             self.selected_idx = self.entries.iter().position(|e| e.name == file_name);
         } else {
             self.status_msg = Some((String::from("Failed to create file"), 40));
@@ -254,6 +304,32 @@ impl FileManagerApp {
         }
     }
 
+    pub fn confirm_rename(&mut self) {
+        if let Some((idx, new_name)) = self.rename_dialog.take() {
+            if idx < self.entries.len() && !new_name.is_empty() {
+                let old_entry = &self.entries[idx];
+                let old_path = if self.current_path == "/" {
+                    format!("/{}", old_entry.name)
+                } else {
+                    format!("{}/{}", self.current_path, old_entry.name)
+                };
+                let new_path = if self.current_path == "/" {
+                    format!("/{}", new_name)
+                } else {
+                    format!("{}/{}", self.current_path, new_name)
+                };
+                if crate::fs::rename(&old_path, &new_path).is_ok() {
+                    let _ = crate::fs::sync();
+                    self.status_msg = Some((format!("Renamed to {}", new_name), 40));
+                    self.refresh();
+                    self.selected_idx = self.entries.iter().position(|e| e.name == new_name);
+                } else {
+                    self.status_msg = Some((String::from("Rename failed"), 40));
+                }
+            }
+        }
+    }
+
     pub fn open_selected(&mut self) {
         if let Some(idx) = self.selected_idx {
             if idx < self.entries.len() {
@@ -303,29 +379,97 @@ impl Application for FileManagerApp {
         false
     }
 
+    fn on_raw_key(&mut self, event: pc_keyboard::KeyEvent) {
+        match event.code {
+            KeyCode::LControl | KeyCode::RControl => {
+                self.ctrl_pressed = event.state == pc_keyboard::KeyState::Down;
+            }
+            _ => {}
+        }
+    }
+
     fn on_key(&mut self, key: DecodedKey) {
-        match key {
-            DecodedKey::RawKey(KeyCode::ArrowUp) => {
-                if !self.entries.is_empty() {
-                    let cur = self.selected_idx.unwrap_or(0);
-                    if cur > 0 {
-                        self.selected_idx = Some(cur - 1);
+        // 1. Rename dialog active
+        if let Some((_, ref mut name_buf)) = self.rename_dialog {
+            match key {
+                DecodedKey::Unicode('\n') | DecodedKey::Unicode('\r') => {
+                    self.confirm_rename();
+                }
+                DecodedKey::Unicode('\x1b') => {
+                    self.rename_dialog = None;
+                }
+                DecodedKey::Unicode('\u{0008}') => {
+                    name_buf.pop();
+                }
+                DecodedKey::Unicode(c) if c >= ' ' && c <= '~' => {
+                    if name_buf.len() < 32 {
+                        name_buf.push(c);
                     }
                 }
+                DecodedKey::RawKey(KeyCode::Escape) => {
+                    self.rename_dialog = None;
+                }
+                DecodedKey::RawKey(KeyCode::Backspace) => {
+                    name_buf.pop();
+                }
+                _ => {}
             }
-            DecodedKey::RawKey(KeyCode::ArrowDown) => {
-                if !self.entries.is_empty() {
-                    let cur = self.selected_idx.unwrap_or(0);
-                    if cur + 1 < self.entries.len() {
-                        self.selected_idx = Some(cur + 1);
+            return;
+        }
+
+        // 2. Normal key handling
+        match key {
+            DecodedKey::Unicode('\x1b') | DecodedKey::RawKey(KeyCode::Escape) => {
+                // Dismiss context menu or properties
+                if self.context_menu.is_some() {
+                    self.context_menu = None;
+                } else if self.properties_open {
+                    self.properties_open = false;
+                }
+            }
+            DecodedKey::Unicode('\x03') => {
+                self.copy_selected();
+            }
+            DecodedKey::Unicode('\x16') => {
+                self.paste_clipboard();
+            }
+            DecodedKey::Unicode(c) if self.ctrl_pressed && (c == 'c' || c == 'C') => {
+                self.copy_selected();
+            }
+            DecodedKey::Unicode(c) if self.ctrl_pressed && (c == 'v' || c == 'V') => {
+                self.paste_clipboard();
+            }
+            DecodedKey::RawKey(KeyCode::F2) => {
+                if let Some(idx) = self.selected_idx {
+                    if idx < self.entries.len() {
+                        let name = self.entries[idx].name.clone();
+                        self.rename_dialog = Some((idx, name));
                     }
                 }
             }
             DecodedKey::RawKey(KeyCode::Delete) => {
                 self.delete_selected();
             }
-            DecodedKey::Unicode('\n') => {
+            DecodedKey::Unicode('\n') | DecodedKey::Unicode('\r') => {
                 self.open_selected();
+            }
+            DecodedKey::RawKey(KeyCode::ArrowUp) => {
+                if let Some(sel) = self.selected_idx {
+                    if sel > 0 {
+                        self.selected_idx = Some(sel - 1);
+                    }
+                } else if !self.entries.is_empty() {
+                    self.selected_idx = Some(0);
+                }
+            }
+            DecodedKey::RawKey(KeyCode::ArrowDown) => {
+                if let Some(sel) = self.selected_idx {
+                    if sel + 1 < self.entries.len() {
+                        self.selected_idx = Some(sel + 1);
+                    }
+                } else if !self.entries.is_empty() {
+                    self.selected_idx = Some(0);
+                }
             }
             DecodedKey::RawKey(KeyCode::Backspace) => {
                 self.go_up();
@@ -338,78 +482,190 @@ impl Application for FileManagerApp {
     }
 
     fn on_mouse_click(&mut self, local_x: isize, local_y: isize, left: bool) {
-        if !left {
-            return;
-        }
+        let client_w = self.last_w.max(500);
+        let client_h = self.last_h.max(340);
 
-        // Check if Properties modal is open
-        if self.properties_open {
-            // OK button in properties modal (centered at box)
-            // Modal bounds: 260 x 210 in center
-            // Click outside or OK button closes modal
-            self.properties_open = false;
-            return;
-        }
+        // 1. Rename Dialog Hit-Testing
+        if let Some((_, _)) = &self.rename_dialog {
+            if left {
+                let rw = 260;
+                let rh = 110;
+                let rx = (client_w as isize - rw as isize) / 2;
+                let ry = (client_h as isize - rh as isize) / 2;
+                let btn_y = ry + 74;
 
-        // 1. Toolbar buttons (y: 2..24)
-        if local_y >= 2 && local_y <= 24 {
-            if local_x >= 4 && local_x < 52 {
-                self.go_back();
-            } else if local_x >= 54 && local_x < 98 {
-                self.go_forward();
-            } else if local_x >= 100 && local_x < 140 {
-                self.go_up();
-            } else if local_x >= 142 && local_x < 198 {
-                self.refresh();
-            } else if local_x >= 204 && local_x < 268 {
-                self.new_file();
-            } else if local_x >= 272 && local_x < 332 {
-                self.new_folder();
-            } else if local_x >= 336 && local_x < 388 {
-                self.delete_selected();
-            } else if local_x >= 392 && local_x < 436 {
-                self.copy_selected();
-            } else if local_x >= 440 && local_x < 488 {
-                self.paste_clipboard();
-            } else if local_x >= 492 && local_x < 564 {
-                self.properties_open = true;
-            }
-            return;
-        }
-
-        // 2. Left Quick Access Locations Panel (x: 4..124, y: 52..client_h - 24)
-        if local_x >= 4 && local_x <= 124 && local_y >= 74 {
-            let item_idx = ((local_y - 74) / 22) as usize;
-            match item_idx {
-                0 => self.navigate_to("/"),
-                1 => self.navigate_to("/bin"),
-                2 => self.navigate_to("/etc"),
-                3 => self.navigate_to("/home/user"),
-                4 => self.navigate_to("/tmp"),
-                5 => self.navigate_to("/dev"),
-                _ => {}
-            }
-            return;
-        }
-
-        // 3. Right File List View (x: 128..client_w - 4, y: 72..client_h - 24)
-        if local_x >= 128 && local_y >= 72 {
-            let item_y = local_y - 72;
-            let clicked_idx = (item_y / 20) as usize + self.scroll_offset;
-            if clicked_idx < self.entries.len() {
-                // Check double click
-                let is_double_click = self.last_click_idx == Some(clicked_idx)
-                    && self.tick_counter.saturating_sub(self.last_click_tick) < 45;
-
-                self.selected_idx = Some(clicked_idx);
-                self.last_click_idx = Some(clicked_idx);
-                self.last_click_tick = self.tick_counter;
-
-                if is_double_click {
-                    self.open_selected();
+                // Close 'X' button
+                if local_x >= rx + rw as isize - 18 && local_x < rx + rw as isize - 4 && local_y >= ry + 4 && local_y < ry + 18 {
+                    self.rename_dialog = None;
+                    return;
                 }
-            } else {
-                self.selected_idx = None;
+                // OK button
+                if local_x >= rx + 44 && local_x < rx + 114 && local_y >= btn_y && local_y < btn_y + 22 {
+                    self.confirm_rename();
+                    return;
+                }
+                // Cancel button
+                if local_x >= rx + 144 && local_x < rx + 214 && local_y >= btn_y && local_y < btn_y + 22 {
+                    self.rename_dialog = None;
+                    return;
+                }
+                // Click outside modal cancels
+                if local_x < rx || local_x >= rx + rw as isize || local_y < ry || local_y >= ry + rh as isize {
+                    self.rename_dialog = None;
+                    return;
+                }
+            }
+            return;
+        }
+
+        // 2. Properties Dialog Hit-Testing
+        if self.properties_open {
+            if left {
+                self.properties_open = false;
+            }
+            return;
+        }
+
+        // 3. Context Menu Hit-Testing
+        if let Some(menu) = self.context_menu.take() {
+            if left {
+                let menu_w = menu.width as isize;
+                let menu_h = (menu.items.len() * 20 + 6) as isize;
+                let clamped_x = menu.x.clamp(4, (client_w.saturating_sub(menu.width + 4)) as isize);
+                let clamped_y = menu.y.clamp(4, (client_h.saturating_sub(menu_h as usize + 4)) as isize);
+
+                if local_x >= clamped_x && local_x < clamped_x + menu_w && local_y >= clamped_y && local_y < clamped_y + menu_h {
+                    let rel_y = local_y - (clamped_y + 3);
+                    if rel_y >= 0 {
+                        let item_idx = (rel_y / 20) as usize;
+                        if item_idx < menu.items.len() {
+                            let item = &menu.items[item_idx];
+                            if !item.is_separator {
+                                match item.action {
+                                    ContextMenuAction::Open => self.open_selected(),
+                                    ContextMenuAction::Copy => self.copy_selected(),
+                                    ContextMenuAction::Paste => self.paste_clipboard(),
+                                    ContextMenuAction::Delete => self.delete_selected(),
+                                    ContextMenuAction::Rename => {
+                                        if let Some(idx) = self.selected_idx {
+                                            if idx < self.entries.len() {
+                                                let name = self.entries[idx].name.clone();
+                                                self.rename_dialog = Some((idx, name));
+                                            }
+                                        }
+                                    }
+                                    ContextMenuAction::NewFile => self.new_file(),
+                                    ContextMenuAction::NewFolder => self.new_folder(),
+                                    ContextMenuAction::Refresh => self.refresh(),
+                                    ContextMenuAction::Properties => self.properties_open = true,
+                                }
+                            }
+                        }
+                    }
+                    return;
+                }
+            }
+            // If click was outside, context menu is dismissed; proceed to handle click normally
+        }
+
+        // 4. Dispatch Click: Left vs Right Click
+        if left {
+            // A. Clean Top Toolbar buttons (y: 2..24)
+            if local_y >= 2 && local_y <= 24 {
+                if local_x >= 4 && local_x < 52 {
+                    self.go_back();
+                } else if local_x >= 54 && local_x < 98 {
+                    self.go_forward();
+                } else if local_x >= 100 && local_x < 140 {
+                    self.go_up();
+                } else if local_x >= 148 && local_x < 206 {
+                    self.refresh();
+                } else if local_x >= 214 && local_x < 288 {
+                    self.properties_open = true;
+                }
+                return;
+            }
+
+            // B. Left Quick Access Locations Panel (x: 4..124, y: 74..)
+            if local_x >= 4 && local_x <= 124 && local_y >= 74 {
+                let item_idx = ((local_y - 74) / 22) as usize;
+                match item_idx {
+                    0 => self.navigate_to("/"),
+                    1 => self.navigate_to("/bin"),
+                    2 => self.navigate_to("/etc"),
+                    3 => self.navigate_to("/home/user"),
+                    4 => self.navigate_to("/tmp"),
+                    5 => self.navigate_to("/dev"),
+                    _ => {}
+                }
+                return;
+            }
+
+            // C. Right File List View (x: 128..client_w - 4, y: 72..client_h - 24)
+            if local_x >= 128 && local_y >= 72 {
+                let item_y = local_y - 72;
+                let clicked_idx = (item_y / 20) as usize + self.scroll_offset;
+                if clicked_idx < self.entries.len() {
+                    let is_double_click = self.last_click_idx == Some(clicked_idx)
+                        && self.tick_counter.saturating_sub(self.last_click_tick) < 45;
+
+                    self.selected_idx = Some(clicked_idx);
+                    self.last_click_idx = Some(clicked_idx);
+                    self.last_click_tick = self.tick_counter;
+
+                    if is_double_click {
+                        self.open_selected();
+                    }
+                } else {
+                    self.selected_idx = None;
+                }
+            }
+        } else {
+            // RIGHT CLICK CONTEXT MENU!
+            if local_x >= 128 && local_y >= 72 {
+                let item_y = local_y - 72;
+                let clicked_idx = (item_y / 20) as usize + self.scroll_offset;
+                let menu_w = 136;
+
+                if clicked_idx < self.entries.len() {
+                    // Right click on file/folder entry
+                    self.selected_idx = Some(clicked_idx);
+                    let items = alloc::vec![
+                        ContextMenuItem { label: "Open", is_separator: false, action: ContextMenuAction::Open },
+                        ContextMenuItem { label: "", is_separator: true, action: ContextMenuAction::Open },
+                        ContextMenuItem { label: "Copy", is_separator: false, action: ContextMenuAction::Copy },
+                        ContextMenuItem { label: "Delete", is_separator: false, action: ContextMenuAction::Delete },
+                        ContextMenuItem { label: "Rename", is_separator: false, action: ContextMenuAction::Rename },
+                        ContextMenuItem { label: "", is_separator: true, action: ContextMenuAction::Open },
+                        ContextMenuItem { label: "Properties", is_separator: false, action: ContextMenuAction::Properties },
+                    ];
+                    self.context_menu = Some(ContextMenuState {
+                        x: local_x,
+                        y: local_y,
+                        width: menu_w,
+                        target: ContextMenuTarget::Item(clicked_idx),
+                        items,
+                    });
+                } else {
+                    // Right click on blank/empty folder space
+                    self.selected_idx = None;
+                    let items = alloc::vec![
+                        ContextMenuItem { label: "Refresh", is_separator: false, action: ContextMenuAction::Refresh },
+                        ContextMenuItem { label: "", is_separator: true, action: ContextMenuAction::Refresh },
+                        ContextMenuItem { label: "New File", is_separator: false, action: ContextMenuAction::NewFile },
+                        ContextMenuItem { label: "New Folder", is_separator: false, action: ContextMenuAction::NewFolder },
+                        ContextMenuItem { label: "", is_separator: true, action: ContextMenuAction::Refresh },
+                        ContextMenuItem { label: "Paste", is_separator: false, action: ContextMenuAction::Paste },
+                        ContextMenuItem { label: "Properties", is_separator: false, action: ContextMenuAction::Properties },
+                    ];
+                    self.context_menu = Some(ContextMenuState {
+                        x: local_x,
+                        y: local_y,
+                        width: menu_w,
+                        target: ContextMenuTarget::EmptyArea,
+                        items,
+                    });
+                }
             }
         }
     }
@@ -422,10 +678,13 @@ impl Application for FileManagerApp {
         client_w: usize,
         client_h: usize,
     ) {
+        self.last_w = client_w;
+        self.last_h = client_h;
+
         // Background panel
         fb.fill_rect(client_x, client_y, client_w, client_h, Color::RETRO_FACE);
 
-        // 1. Toolbar (height 26)
+        // 1. Clean Toolbar (height 26) - Essential buttons only!
         fb.draw_button(client_x + 4, client_y + 2, 48, 22, false);
         fb.draw_string(client_x + 8, client_y + 6, "< Back", Color::BLACK);
 
@@ -435,26 +694,17 @@ impl Application for FileManagerApp {
         fb.draw_button(client_x + 100, client_y + 2, 40, 22, false);
         fb.draw_string(client_x + 106, client_y + 6, "^ Up", Color::BLACK);
 
-        fb.draw_button(client_x + 142, client_y + 2, 56, 22, false);
-        fb.draw_string(client_x + 146, client_y + 6, "Refresh", Color::BLACK);
+        // Vertical separator groove
+        fb.draw_groove(client_x + 144, client_y + 3, 2, 20);
 
-        fb.draw_button(client_x + 204, client_y + 2, 64, 22, false);
-        fb.draw_string(client_x + 208, client_y + 6, "New File", Color::BLACK);
+        fb.draw_button(client_x + 148, client_y + 2, 58, 22, false);
+        fb.draw_string(client_x + 152, client_y + 6, "Refresh", Color::BLACK);
 
-        fb.draw_button(client_x + 272, client_y + 2, 60, 22, false);
-        fb.draw_string(client_x + 276, client_y + 6, "New Dir", Color::BLACK);
+        // Vertical separator groove
+        fb.draw_groove(client_x + 210, client_y + 3, 2, 20);
 
-        fb.draw_button(client_x + 336, client_y + 2, 52, 22, false);
-        fb.draw_string(client_x + 342, client_y + 6, "Delete", Color::from_rgb(180, 20, 20));
-
-        fb.draw_button(client_x + 392, client_y + 2, 44, 22, false);
-        fb.draw_string(client_x + 398, client_y + 6, "Copy", Color::BLACK);
-
-        fb.draw_button(client_x + 440, client_y + 2, 48, 22, false);
-        fb.draw_string(client_x + 446, client_y + 6, "Paste", Color::BLACK);
-
-        fb.draw_button(client_x + 492, client_y + 2, 72, 22, false);
-        fb.draw_string(client_x + 496, client_y + 6, "Properties", Color::BLACK);
+        fb.draw_button(client_x + 214, client_y + 2, 74, 22, false);
+        fb.draw_string(client_x + 218, client_y + 6, "Properties", Color::BLACK);
 
         // Separator groove below toolbar
         fb.draw_groove(client_x + 2, client_y + 25, client_w - 4, 2);
@@ -478,11 +728,11 @@ impl Application for FileManagerApp {
         fb.draw_sunken_panel(client_x + 4, content_y, left_w, content_h);
         fb.fill_rect(client_x + 6, content_y + 2, left_w - 4, content_h - 4, Color::from_rgb(240, 240, 240));
 
-        // Quick Access header
-        fb.fill_rect(client_x + 6, content_y + 2, left_w - 4, 18, Color::RETRO_HIGHLIGHT);
-        fb.draw_string(client_x + 10, content_y + 4, "Folders", Color::BLACK);
+        // Quick Access Header
+        fb.draw_string(client_x + 8, content_y + 6, "Folders", Color::BLACK);
+        fb.draw_groove(client_x + 6, content_y + 20, left_w - 4, 2);
 
-        let quick_items = [
+        let locations = [
             ("/", "Root (/)"),
             ("/bin", "Binaries"),
             ("/etc", "Config"),
@@ -491,56 +741,49 @@ impl Application for FileManagerApp {
             ("/dev", "Devices"),
         ];
 
-        for (i, (qpath, qlabel)) in quick_items.iter().enumerate() {
-            let qy = content_y + 24 + (i as isize * 22);
-            if qy + 20 > content_y + content_h as isize {
-                break;
+        for (i, (loc_path, loc_label)) in locations.iter().enumerate() {
+            let ly = content_y + 24 + (i as isize * 22);
+            let is_active = self.current_path == *loc_path;
+            if is_active {
+                fb.fill_rect(client_x + 8, ly, left_w - 8, 20, Color::from_rgb(205, 230, 255));
+                fb.draw_rect(client_x + 8, ly, left_w - 8, 20, Color::from_rgb(0, 100, 200));
             }
-            let is_current = self.current_path == *qpath;
-            if is_current {
-                fb.fill_rect(client_x + 8, qy, left_w - 8, 20, Color::from_rgb(219, 234, 254));
-                fb.draw_rect(client_x + 8, qy, left_w - 8, 20, Color::from_rgb(59, 130, 246));
-            }
-            icons::draw_folder_icon_16(fb, client_x + 10, qy + 2);
-            fb.draw_string(client_x + 28, qy + 4, qlabel, Color::BLACK);
+            icons::draw_folder_icon_16(fb, client_x + 10, ly + 2);
+            fb.draw_string(client_x + 28, ly + 3, loc_label, Color::BLACK);
         }
 
-        // Right File List panel
-        let right_x = client_x + 130;
-        let right_w = client_w.saturating_sub(134);
+        // Right File List Details View
+        let right_x = client_x + left_w as isize + 6;
+        let right_w = client_w.saturating_sub(left_w + 10);
         fb.draw_sunken_panel(right_x, content_y, right_w, content_h);
         fb.fill_rect(right_x + 2, content_y + 2, right_w - 4, content_h - 4, Color::WHITE);
 
-        // List Column Headers
-        let header_y = content_y + 2;
-        fb.fill_rect(right_x + 2, header_y, right_w - 4, 18, Color::RETRO_FACE);
-        fb.draw_button(right_x + 2, header_y, 160, 18, false);
-        fb.draw_string(right_x + 8, header_y + 2, "Name", Color::BLACK);
+        // Header Row (Name, Size, Type)
+        let header_h = 18;
+        fb.fill_rect(right_x + 2, content_y + 2, right_w - 4, header_h, Color::RETRO_FACE);
+        fb.draw_bevel_raised(right_x + 2, content_y + 2, right_w - 4, header_h);
+        fb.draw_string(right_x + 6, content_y + 4, "Name", Color::BLACK);
+        fb.draw_groove(right_x + 160, content_y + 3, 2, 16);
+        fb.draw_string(right_x + 168, content_y + 4, "Size", Color::BLACK);
+        fb.draw_groove(right_x + 240, content_y + 3, 2, 16);
+        fb.draw_string(right_x + 248, content_y + 4, "Type", Color::BLACK);
 
-        fb.draw_button(right_x + 162, header_y, 80, 18, false);
-        fb.draw_string(right_x + 168, header_y + 2, "Size", Color::BLACK);
+        // File rows
+        let list_start_y = content_y + 22;
+        let max_rows = (content_h.saturating_sub(24)) / 20;
 
-        let type_w = right_w.saturating_sub(242);
-        fb.draw_button(right_x + 242, header_y, type_w, 18, false);
-        fb.draw_string(right_x + 248, header_y + 2, "Type", Color::BLACK);
+        for (idx, entry) in self.entries.iter().skip(self.scroll_offset).take(max_rows).enumerate() {
+            let actual_idx = idx + self.scroll_offset;
+            let row_y = list_start_y + (idx as isize * 20);
+            let is_selected = self.selected_idx == Some(actual_idx);
 
-        // List Entries
-        let list_y = content_y + 21;
-        let visible_rows = (content_h.saturating_sub(22)) / 20;
-
-        for (idx, entry) in self.entries.iter().enumerate().skip(self.scroll_offset).take(visible_rows) {
-            let row_y = list_y + ((idx - self.scroll_offset) as isize * 20);
-            let is_sel = self.selected_idx == Some(idx);
-
-            if is_sel {
-                fb.fill_rect(right_x + 2, row_y, right_w - 4, 20, Color::RETRO_SELECTION);
-            } else if idx % 2 == 1 {
-                fb.fill_rect(right_x + 2, row_y, right_w - 4, 20, Color::from_rgb(248, 250, 252));
+            if is_selected {
+                fb.fill_rect(right_x + 3, row_y, right_w - 6, 20, Color::RETRO_SELECTION);
             }
 
-            let text_color = if is_sel { Color::WHITE } else { Color::BLACK };
+            let text_color = if is_selected { Color::WHITE } else { Color::BLACK };
 
-            // Icon
+            // File Icon
             if entry.is_dir {
                 icons::draw_folder_icon_16(fb, right_x + 6, row_y + 2);
             } else {
@@ -589,7 +832,7 @@ impl Application for FileManagerApp {
         let status_text = if let Some((msg, _)) = &self.status_msg {
             msg.clone()
         } else {
-            format!("{} object(s) in {}", self.entries.len(), self.current_path)
+            format!("{} object(s) in {} (Right-click for options)", self.entries.len(), self.current_path)
         };
         fb.draw_string(client_x + 8, status_y + 2, &status_text, Color::BLACK);
 
@@ -650,6 +893,83 @@ impl Application for FileManagerApp {
             let btn_y = py + ph as isize - 28;
             fb.draw_button(btn_x, btn_y, 60, 22, false);
             fb.draw_string(btn_x + 20, btn_y + 4, "OK", Color::BLACK);
+        }
+
+        // 6. Modal Rename Dialog if open
+        if let Some((_, ref new_name)) = self.rename_dialog {
+            let rw = 260;
+            let rh = 110;
+            let rx = client_x + (client_w as isize - rw as isize) / 2;
+            let ry = client_y + (client_h as isize - rh as isize) / 2;
+
+            fb.fill_rect(rx, ry, rw, rh, Color::RETRO_FACE);
+            fb.draw_bevel_raised(rx, ry, rw, rh);
+
+            // Dialog titlebar
+            fb.fill_rect(rx + 2, ry + 2, rw - 4, 18, Color::from_rgb(0, 0, 128));
+            fb.draw_string(rx + 8, ry + 4, "Rename Item", Color::WHITE);
+
+            // Close 'X'
+            fb.draw_button(rx + rw as isize - 18, ry + 4, 14, 14, false);
+            fb.draw_string(rx + rw as isize - 14, ry + 4, "X", Color::BLACK);
+
+            fb.draw_string(rx + 12, ry + 26, "Enter new name:", Color::BLACK);
+
+            let input_x = rx + 12;
+            let input_y = ry + 44;
+            let input_w = rw - 24;
+            fb.fill_rect(input_x, input_y, input_w, 20, Color::WHITE);
+            fb.draw_bevel_sunken(input_x, input_y, input_w, 20);
+            fb.draw_string(input_x + 4, input_y + 4, new_name, Color::BLACK);
+
+            // Buttons: [ OK ] [ Cancel ]
+            let btn_y = ry + 74;
+            fb.draw_button(rx + 44, btn_y, 70, 22, false);
+            fb.draw_string(rx + 68, btn_y + 4, "OK", Color::BLACK);
+
+            fb.draw_button(rx + 144, btn_y, 70, 22, false);
+            fb.draw_string(rx + 154, btn_y + 4, "Cancel", Color::BLACK);
+        }
+
+        // 7. Right-Click Context Menu (drawn on top of everything)
+        if let Some(menu) = &self.context_menu {
+            let menu_w = menu.width;
+            let menu_h = menu.items.len() * 20 + 6;
+            let clamped_x = menu.x.clamp(4, (client_w.saturating_sub(menu_w + 4)) as isize);
+            let clamped_y = menu.y.clamp(4, (client_h.saturating_sub(menu_h + 4)) as isize);
+            let mx = client_x + clamped_x;
+            let my = client_y + clamped_y;
+
+            // 3D raised frame
+            fb.fill_rect(mx, my, menu_w, menu_h, Color::RETRO_FACE);
+            fb.draw_bevel_raised(mx, my, menu_w, menu_h);
+
+            let mouse_state = crate::drivers::mouse::get_mouse_state();
+            let mut item_y = my + 3;
+
+            for item in &menu.items {
+                if item.is_separator {
+                    fb.draw_groove(mx + 4, item_y + 9, menu_w - 8, 2);
+                } else {
+                    let is_hovered = mouse_state.x >= mx + 2
+                        && mouse_state.x < mx + (menu_w as isize) - 2
+                        && mouse_state.y >= item_y
+                        && mouse_state.y < item_y + 20;
+
+                    if is_hovered {
+                        fb.fill_rect(mx + 2, item_y, menu_w - 4, 20, Color::RETRO_SELECTION);
+                    }
+
+                    let text_color = if is_hovered {
+                        Color::WHITE
+                    } else {
+                        Color::BLACK
+                    };
+
+                    fb.draw_string(mx + 18, item_y + 4, item.label, text_color);
+                }
+                item_y += 20;
+            }
         }
     }
 }

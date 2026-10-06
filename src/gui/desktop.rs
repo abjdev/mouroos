@@ -36,6 +36,7 @@ pub struct Desktop {
     start_menu_open: bool,
     icons: [DesktopIcon; 11],
     prev_left_pressed: bool,
+    prev_right_pressed: bool,
     pub theme: Theme,
     cursor_saved: [u32; 24 * 24],
     cursor_saved_x: isize,
@@ -86,6 +87,7 @@ impl Desktop {
             start_menu_open: false,
             icons,
             prev_left_pressed: false,
+            prev_right_pressed: false,
             theme,
             cursor_saved: [0; 24 * 24],
             cursor_saved_x: -100,
@@ -364,7 +366,9 @@ impl Desktop {
     pub fn handle_mouse_event(&mut self, ev: MouseEvent) -> bool {
         let left_just_pressed = ev.left_pressed && !self.prev_left_pressed;
         let left_just_released = !ev.left_pressed && self.prev_left_pressed;
+        let right_just_pressed = ev.right_pressed && !self.prev_right_pressed;
         self.prev_left_pressed = ev.left_pressed;
+        self.prev_right_pressed = ev.right_pressed;
 
         // Window Dragging in progress
         if let Some(win_idx) = self.dragging_window_idx {
@@ -410,14 +414,14 @@ impl Desktop {
             return was_dragging;
         }
 
-        if !left_just_pressed {
+        if !left_just_pressed && !right_just_pressed {
             return false;
         }
 
         let taskbar_y = (self.fb.height - TASKBAR_HEIGHT) as isize;
 
         // 1. Check Taskbar Clicks
-        if ev.y >= taskbar_y {
+        if left_just_pressed && ev.y >= taskbar_y {
             // Start button click: (x: 3..61)
             if ev.x >= 3 && ev.x <= 61 {
                 self.start_menu_open = !self.start_menu_open;
@@ -488,13 +492,13 @@ impl Desktop {
             }
 
             // Close button check
-            if self.windows[i].is_over_close_button(ev.x, ev.y) {
+            if left_just_pressed && self.windows[i].is_over_close_button(ev.x, ev.y) {
                 self.windows.remove(i);
                 return true;
             }
 
             // Maximize / Restore button check
-            if self.windows[i].is_over_maximize_button(ev.x, ev.y) {
+            if left_just_pressed && self.windows[i].is_over_maximize_button(ev.x, ev.y) {
                 let work_w = self.fb.width;
                 let work_h = self.fb.height.saturating_sub(TASKBAR_HEIGHT);
                 self.windows[i].toggle_maximize(work_w, work_h);
@@ -503,7 +507,7 @@ impl Desktop {
             }
 
             // Minimize button check
-            if self.windows[i].is_over_minimize_button(ev.x, ev.y) {
+            if left_just_pressed && self.windows[i].is_over_minimize_button(ev.x, ev.y) {
                 self.windows[i].is_minimized = true;
                 self.windows[i].is_focused = false;
                 self.windows[i].app.on_blur();
@@ -511,7 +515,7 @@ impl Desktop {
             }
 
             // Titlebar click: focus and initiate dragging (or double-click to maximize)
-            if self.windows[i].is_over_titlebar(ev.x, ev.y) {
+            if left_just_pressed && self.windows[i].is_over_titlebar(ev.x, ev.y) {
                 let win_id = self.windows[i].id;
                 let is_double = self.last_title_click_win == Some(win_id)
                     && self.tick_count.saturating_sub(self.last_title_click_tick) < 45;
@@ -540,7 +544,7 @@ impl Desktop {
             let (cx, cy, _, _) = self.windows[top_idx].client_bounds();
             let local_x = ev.x - cx;
             let local_y = ev.y - cy;
-            self.windows[top_idx].app.on_mouse_click(local_x, local_y, true);
+            self.windows[top_idx].app.on_mouse_click(local_x, local_y, left_just_pressed);
             if let Some(act) = self.windows[top_idx].app.take_pending_action() {
                 self.handle_desktop_action(act);
             }
@@ -551,19 +555,21 @@ impl Desktop {
         }
 
         // 4. Check Desktop Icons
-        for (idx, icon) in self.icons.iter().enumerate() {
-            if ev.x >= icon.x && ev.x < icon.x + 56 && ev.y >= icon.y && ev.y < icon.y + 60 {
-                let is_double = self.last_icon_click_idx == Some(idx)
-                    && self.tick_count.saturating_sub(self.last_icon_click_tick) < 45;
-                self.selected_desktop_icon = Some(idx);
-                self.last_icon_click_idx = Some(idx);
-                self.last_icon_click_tick = self.tick_count;
+        if left_just_pressed {
+            for (idx, icon) in self.icons.iter().enumerate() {
+                if ev.x >= icon.x && ev.x < icon.x + 56 && ev.y >= icon.y && ev.y < icon.y + 60 {
+                    let is_double = self.last_icon_click_idx == Some(idx)
+                        && self.tick_count.saturating_sub(self.last_icon_click_tick) < 45;
+                    self.selected_desktop_icon = Some(idx);
+                    self.last_icon_click_idx = Some(idx);
+                    self.last_icon_click_tick = self.tick_count;
 
-                if is_double {
-                    self.launch_app_by_id(icon.app_id);
-                    self.last_icon_click_idx = None;
+                    if is_double {
+                        self.launch_app_by_id(icon.app_id);
+                        self.last_icon_click_idx = None;
+                    }
+                    return true;
                 }
-                return true;
             }
         }
 
