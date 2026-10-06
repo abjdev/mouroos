@@ -9,12 +9,72 @@ use alloc::vec::Vec;
 use pc_keyboard::{DecodedKey, KeyCode};
 use x86_64::instructions::port::Port;
 
+pub const COMMANDS: &[&str] = &[
+    "beep", "calc", "cat", "cd", "clear", "cp", "df", "doom", "echo",
+    "elf", "env", "export", "free", "grep", "head", "help", "history",
+    "kill", "ls", "mem", "mkdir", "mp3", "mv", "ps", "pwd", "reboot",
+    "rm", "shutdown", "stat", "sync", "sysinfo", "tail", "theme",
+    "time", "top", "touch", "uname", "wait", "wc",
+];
+
+fn longest_common_prefix(candidates: &[String]) -> String {
+    if candidates.is_empty() {
+        return String::new();
+    }
+    let mut prefix = candidates[0].clone();
+    for s in &candidates[1..] {
+        while !s.starts_with(&prefix) {
+            if prefix.is_empty() {
+                return prefix;
+            }
+            prefix.pop();
+        }
+    }
+    prefix
+}
+
+fn tokenize_cmd(input: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    let mut quote_char = ' ';
+
+    for ch in input.chars() {
+        if in_quotes {
+            if ch == quote_char {
+                in_quotes = false;
+            } else {
+                current.push(ch);
+            }
+        } else if ch == '"' || ch == '\'' {
+            in_quotes = true;
+            quote_char = ch;
+        } else if ch.is_whitespace() {
+            if !current.is_empty() {
+                tokens.push(current);
+                current = String::new();
+            }
+        } else {
+            current.push(ch);
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
+}
+
 pub struct TerminalApp {
     lines: Vec<String>,
     current_input: String,
     cursor_visible: bool,
     blink_counter: usize,
     pub cwd: String,
+    history: Vec<String>,
+    history_index: Option<usize>,
+    history_draft: String,
+    env_vars: Vec<(String, String)>,
+    shift_pressed: bool,
 }
 
 impl TerminalApp {
@@ -25,6 +85,19 @@ impl TerminalApp {
             cursor_visible: true,
             blink_counter: 0,
             cwd: String::from("/home/user"),
+            history: Vec::new(),
+            history_index: None,
+            history_draft: String::new(),
+            shift_pressed: false,
+            env_vars: alloc::vec![
+                (String::from("USER"), String::from("user")),
+                (String::from("HOME"), String::from("/home/user")),
+                (String::from("SHELL"), String::from("/bin/msh")),
+                (String::from("PATH"), String::from("/bin:/usr/bin")),
+                (String::from("OS"), String::from("Mouros")),
+                (String::from("TERM"), String::from("mouros-term")),
+                (String::from("PWD"), String::from("/home/user")),
+            ],
         };
 
         app.lines.push(String::from("Mouros Desktop OS Shell [Version 0.2.0]"));
@@ -33,56 +106,316 @@ impl TerminalApp {
         app
     }
 
-    fn execute_command(&mut self) {
-        let input = self.current_input.trim().to_string();
-        self.lines.push(format!("mouros:{}$ {}", self.cwd, input));
-        self.current_input.clear();
-
-        if self.lines.len() > 200 {
-            self.lines.drain(0..40);
+    pub fn get_env(&self, key: &str) -> Option<&str> {
+        for (k, v) in &self.env_vars {
+            if k == key {
+                return Some(v.as_str());
+            }
         }
+        None
+    }
 
-        if input.is_empty() {
+    pub fn set_env(&mut self, key: &str, val: &str) {
+        for (k, v) in &mut self.env_vars {
+            if k == key {
+                *v = String::from(val);
+                return;
+            }
+        }
+        self.env_vars.push((String::from(key), String::from(val)));
+    }
+
+    pub fn expand_env(&self, input: &str) -> String {
+        let mut result = String::new();
+        let chars: Vec<char> = input.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            if chars[i] == '\\' && i + 1 < chars.len() && chars[i + 1] == '$' {
+                result.push('$');
+                i += 2;
+                continue;
+            }
+            if chars[i] == '$' && i + 1 < chars.len() {
+                i += 1;
+                if chars[i] == '{' {
+                    i += 1;
+                    let mut var_name = String::new();
+                    while i < chars.len() && chars[i] != '}' {
+                        var_name.push(chars[i]);
+                        i += 1;
+                    }
+                    if i < chars.len() && chars[i] == '}' {
+                        i += 1;
+                    }
+                    if let Some(val) = self.get_env(&var_name) {
+                        result.push_str(val);
+                    }
+                } else if chars[i] == '?' {
+                    result.push('0');
+                    i += 1;
+                } else if chars[i].is_alphanumeric() || chars[i] == '_' {
+                    let mut var_name = String::new();
+                    while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
+                        var_name.push(chars[i]);
+                        i += 1;
+                    }
+                    if let Some(val) = self.get_env(&var_name) {
+                        result.push_str(val);
+                    }
+                } else {
+                    result.push('$');
+                }
+            } else {
+                result.push(chars[i]);
+                i += 1;
+            }
+        }
+        result
+    }
+
+    fn history_up(&mut self) {
+        if self.history.is_empty() {
+            return;
+        }
+        match self.history_index {
+            None => {
+                self.history_draft = self.current_input.clone();
+                let last = self.history.len() - 1;
+                self.history_index = Some(last);
+                self.current_input = self.history[last].clone();
+            }
+            Some(idx) => {
+                if idx > 0 {
+                    let next = idx - 1;
+                    self.history_index = Some(next);
+                    self.current_input = self.history[next].clone();
+                }
+            }
+        }
+    }
+
+    fn history_down(&mut self) {
+        if let Some(idx) = self.history_index {
+            if idx + 1 < self.history.len() {
+                let next = idx + 1;
+                self.history_index = Some(next);
+                self.current_input = self.history[next].clone();
+            } else {
+                self.history_index = None;
+                self.current_input = self.history_draft.clone();
+            }
+        }
+    }
+
+    fn tab_complete(&mut self) {
+        if self.current_input.is_empty() {
             return;
         }
 
-        // Check for file redirection (> truncate or >> append)
-        let (cmd_part, redirect) = if let Some(pos) = input.find(">>") {
-            (input[..pos].trim(), Some((input[pos + 2..].trim(), true)))
-        } else if let Some(pos) = input.find('>') {
-            (input[..pos].trim(), Some((input[pos + 1..].trim(), false)))
+        let (prefix_context, token) = match self.current_input.rfind(|c: char| c.is_whitespace() || c == '|') {
+            Some(idx) => (&self.current_input[..=idx], &self.current_input[idx + 1..]),
+            None => ("", self.current_input.as_str()),
+        };
+
+        if token.is_empty() {
+            return;
+        }
+
+        let is_command = prefix_context.trim().is_empty() || prefix_context.trim().ends_with('|');
+
+        let candidates: Vec<String> = if is_command {
+            let mut matches = Vec::new();
+            for &cmd in COMMANDS {
+                if cmd.starts_with(token) {
+                    matches.push(String::from(cmd));
+                }
+            }
+            matches
+        } else if token.starts_with('$') {
+            let var_prefix = &token[1..];
+            let mut matches = Vec::new();
+            for (k, _) in &self.env_vars {
+                if k.starts_with(var_prefix) {
+                    matches.push(format!("${}", k));
+                }
+            }
+            matches
         } else {
-            (input.as_str(), None)
+            let (dir_to_read, file_prefix) = if token.starts_with('/') {
+                match token.rfind('/') {
+                    Some(idx) => {
+                        let d = if idx == 0 { "/" } else { &token[..idx] };
+                        let f = &token[idx + 1..];
+                        (String::from(d), f)
+                    }
+                    None => (String::from("/"), &token[1..]),
+                }
+            } else {
+                match token.rfind('/') {
+                    Some(idx) => {
+                        let rel_dir = &token[..idx];
+                        let d = crate::fs::resolve_relative_path(&self.cwd, rel_dir);
+                        let f = &token[idx + 1..];
+                        (d, f)
+                    }
+                    None => (self.cwd.clone(), token),
+                }
+            };
+
+            let mut matches = Vec::new();
+            if let Ok(entries) = crate::fs::read_dir(&dir_to_read) {
+                for e in entries {
+                    if e.name.starts_with(file_prefix) {
+                        let is_dir = e.file_type == 2;
+                        let path_part = if token.contains('/') {
+                            let base = &token[..token.rfind('/').unwrap() + 1];
+                            format!("{}{}", base, e.name)
+                        } else {
+                            e.name.clone()
+                        };
+                        if is_dir {
+                            matches.push(format!("{}/", path_part));
+                        } else {
+                            matches.push(path_part);
+                        }
+                    }
+                }
+            }
+            matches
+        };
+
+        if candidates.is_empty() {
+            return;
+        }
+
+        if candidates.len() == 1 {
+            let full = &candidates[0];
+            let suffix = if full.ends_with('/') { "" } else { " " };
+            self.current_input = format!("{}{}{}", prefix_context, full, suffix);
+        } else {
+            let lcp = longest_common_prefix(&candidates);
+            if lcp.len() > token.len() {
+                self.current_input = format!("{}{}", prefix_context, lcp);
+            } else {
+                let prompt = format!("mouros:{}$ {}", self.cwd, self.current_input);
+                self.lines.push(prompt);
+                self.lines.push(candidates.join("  "));
+            }
+        }
+    }
+
+    fn execute_command(&mut self) {
+        let raw_input = self.current_input.trim().to_string();
+        self.lines.push(format!("mouros:{}$ {}", self.cwd, raw_input));
+        self.current_input.clear();
+        self.history_index = None;
+        self.history_draft.clear();
+
+        if self.lines.len() > 300 {
+            self.lines.drain(0..60);
+        }
+
+        if raw_input.is_empty() {
+            return;
+        }
+
+        // Add to history (avoid duplicates)
+        if self.history.last().map(|s| s.as_str()) != Some(&raw_input) {
+            self.history.push(raw_input.clone());
+        }
+
+        // Variable expansion
+        let expanded_input = self.expand_env(&raw_input);
+
+        // Check for file output redirection (> truncate or >> append)
+        let (no_redir, out_redirect) = if let Some(pos) = expanded_input.rfind(">>") {
+            (expanded_input[..pos].trim(), Some((expanded_input[pos + 2..].trim(), true)))
+        } else if let Some(pos) = expanded_input.rfind('>') {
+            (expanded_input[..pos].trim(), Some((expanded_input[pos + 1..].trim(), false)))
+        } else {
+            (expanded_input.as_str(), None)
         };
 
         // Check for background operator (&)
-        let (cmd_part, is_bg) = if cmd_part.ends_with('&') {
-            (cmd_part[..cmd_part.len() - 1].trim(), true)
+        let (cmd_line, is_bg) = if no_redir.ends_with('&') {
+            (no_redir[..no_redir.len() - 1].trim(), true)
         } else {
-            (cmd_part, false)
+            (no_redir, false)
         };
 
-        let mut parts = cmd_part.split_whitespace();
-        let cmd = parts.next().unwrap_or("");
-        let mut args: Vec<&str> = parts.collect();
-        if is_bg {
-            args.push("&");
-        }
-
-        if cmd == "clear" {
-            self.lines.clear();
+        // Pipeline parsing
+        let pipe_stages_raw: Vec<&str> = cmd_line.split('|').map(|s| s.trim()).collect();
+        if pipe_stages_raw.is_empty() || pipe_stages_raw[0].is_empty() {
             return;
         }
 
-        let mut out = Vec::new();
-        self.run_cmd(cmd, &args, &mut out);
+        let mut initial_stdin = Vec::new();
+        let mut first_stage = pipe_stages_raw[0];
 
-        if let Some((target_file, is_append)) = redirect {
+        // Check for input redirection (<) in first stage
+        if let Some(pos) = first_stage.find('<') {
+            let in_file = first_stage[pos + 1..].trim();
+            first_stage = first_stage[..pos].trim();
+            if in_file.is_empty() {
+                self.lines.push(String::from("syntax error: expected filename after '<'"));
+                return;
+            }
+            let target_path = crate::fs::resolve_relative_path(&self.cwd, in_file);
+            match crate::fs::read(&target_path) {
+                Ok(bytes) => {
+                    if let Ok(s) = core::str::from_utf8(&bytes) {
+                        for line in s.lines() {
+                            initial_stdin.push(String::from(line));
+                        }
+                    } else {
+                        self.lines.push(format!("{}: binary file cannot be redirected to stdin", in_file));
+                        return;
+                    }
+                }
+                Err(e) => {
+                    self.lines.push(format!("{}: {:?}", in_file, e));
+                    return;
+                }
+            }
+        }
+
+        // Run pipeline stages sequentially
+        let mut pipe_data = initial_stdin;
+        let mut pipeline_stages = Vec::new();
+        pipeline_stages.push(first_stage);
+        for stage in &pipe_stages_raw[1..] {
+            pipeline_stages.push(*stage);
+        }
+
+        for (stage_idx, stage_str) in pipeline_stages.iter().enumerate() {
+            let tokens = tokenize_cmd(stage_str);
+            if tokens.is_empty() {
+                continue;
+            }
+            let cmd = &tokens[0];
+            let mut args: Vec<&str> = tokens[1..].iter().map(|s| s.as_str()).collect();
+
+            if is_bg && stage_idx == pipeline_stages.len() - 1 {
+                args.push("&");
+            }
+
+            if cmd == "clear" {
+                self.lines.clear();
+                return;
+            }
+
+            let mut stage_out = Vec::new();
+            self.run_cmd(cmd, &args, &pipe_data, &mut stage_out);
+            pipe_data = stage_out;
+        }
+
+        // Route final pipeline output
+        if let Some((target_file, is_append)) = out_redirect {
             if target_file.is_empty() {
                 self.lines.push(String::from("syntax error: expected filename after redirection"));
             } else {
                 let target_path = crate::fs::resolve_relative_path(&self.cwd, target_file);
-                let text = out.join("\n") + "\n";
+                let text = pipe_data.join("\n") + "\n";
                 let res = if is_append {
                     crate::fs::append(&target_path, text.as_bytes())
                 } else {
@@ -93,11 +426,11 @@ impl TerminalApp {
                 }
             }
         } else {
-            self.lines.extend(out);
+            self.lines.extend(pipe_data);
         }
     }
 
-    fn run_cmd(&mut self, cmd: &str, args: &[&str], out: &mut Vec<String>) {
+    fn run_cmd(&mut self, cmd: &str, args: &[&str], stdin: &[String], out: &mut Vec<String>) {
         match cmd {
             "help" => {
                 out.push(String::from("Available commands:"));
@@ -105,13 +438,20 @@ impl TerminalApp {
                 out.push(String::from("  ls [-l]   - List directory entries"));
                 out.push(String::from("  cd [dir]  - Change working directory"));
                 out.push(String::from("  pwd       - Print working directory"));
-                out.push(String::from("  cat <f>   - Print file contents"));
+                out.push(String::from("  cat [f]   - Print file or pipeline stdin"));
                 out.push(String::from("  touch <f> - Create an empty file"));
                 out.push(String::from("  mkdir <d> - Create a directory"));
                 out.push(String::from("  rm <path> - Remove file or directory"));
                 out.push(String::from("  cp <s <d> - Copy file"));
                 out.push(String::from("  mv <s <d> - Move or rename file"));
-                out.push(String::from("  echo <t>  - Echo text (supports > and >> redirection)"));
+                out.push(String::from("  echo <t>  - Echo text (supports $VAR and redirection)"));
+                out.push(String::from("  grep <p>  - Filter matching lines (supports -i, -v, -n, -c)"));
+                out.push(String::from("  wc [f]    - Word, line, and byte counter"));
+                out.push(String::from("  head [-n] - Display first lines"));
+                out.push(String::from("  tail [-n] - Display last lines"));
+                out.push(String::from("  history   - View command history"));
+                out.push(String::from("  export    - Set environment variable (KEY=VAL)"));
+                out.push(String::from("  env       - Print environment variables"));
                 out.push(String::from("  stat <f>  - Inode & file metadata"));
                 out.push(String::from("  df        - Disk space & inode usage"));
                 out.push(String::from("  sync      - Commit dirty blocks to disk"));
@@ -209,12 +549,13 @@ impl TerminalApp {
             }
             "cd" => {
                 let target = if args.is_empty() {
-                    String::from("/home/user")
+                    String::from(self.get_env("HOME").unwrap_or("/home/user"))
                 } else {
                     crate::fs::resolve_relative_path(&self.cwd, args[0])
                 };
                 if crate::fs::is_dir(&target) {
-                    self.cwd = target;
+                    self.cwd = target.clone();
+                    self.set_env("PWD", &target);
                 } else if crate::fs::exists(&target) {
                     out.push(format!("cd: not a directory: {}", target));
                 } else {
@@ -292,7 +633,9 @@ impl TerminalApp {
             }
             "cat" => {
                 if args.is_empty() {
-                    out.push(String::from("Usage: cat <filename>"));
+                    for line in stdin {
+                        out.push(line.clone());
+                    }
                 } else {
                     for filename in args {
                         let target = crate::fs::resolve_relative_path(&self.cwd, filename);
@@ -381,8 +724,315 @@ impl TerminalApp {
                 }
             }
             "echo" => {
-                let msg = args.join(" ");
+                let start_idx = if !args.is_empty() && args[0] == "-n" { 1 } else { 0 };
+                let msg = args[start_idx..].join(" ");
                 out.push(msg);
+            }
+            "grep" => {
+                let mut case_insensitive = false;
+                let mut invert_match = false;
+                let mut show_line_num = false;
+                let mut count_only = false;
+                let mut pattern: Option<&str> = None;
+                let mut file_args = Vec::new();
+
+                for arg in args {
+                    if *arg == "-i" {
+                        case_insensitive = true;
+                    } else if *arg == "-v" {
+                        invert_match = true;
+                    } else if *arg == "-n" {
+                        show_line_num = true;
+                    } else if *arg == "-c" {
+                        count_only = true;
+                    } else if arg.starts_with('-') && arg.len() > 1 {
+                        for ch in arg[1..].chars() {
+                            match ch {
+                                'i' => case_insensitive = true,
+                                'v' => invert_match = true,
+                                'n' => show_line_num = true,
+                                'c' => count_only = true,
+                                _ => {}
+                            }
+                        }
+                    } else if pattern.is_none() {
+                        pattern = Some(arg);
+                    } else {
+                        file_args.push(*arg);
+                    }
+                }
+
+                if let Some(pat) = pattern {
+                    let pat_lower = pat.to_ascii_lowercase();
+                    let mut match_count = 0;
+
+                    if file_args.is_empty() {
+                        for (idx, line) in stdin.iter().enumerate() {
+                            let is_match = if case_insensitive {
+                                line.to_ascii_lowercase().contains(&pat_lower)
+                            } else {
+                                line.contains(pat)
+                            };
+                            let selected = if invert_match { !is_match } else { is_match };
+                            if selected {
+                                match_count += 1;
+                                if !count_only {
+                                    if show_line_num {
+                                        out.push(format!("{}:{}", idx + 1, line));
+                                    } else {
+                                        out.push(line.clone());
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        let multi_files = file_args.len() > 1;
+                        for file in file_args {
+                            let target = crate::fs::resolve_relative_path(&self.cwd, file);
+                            match crate::fs::read(&target) {
+                                Ok(bytes) => {
+                                    if let Ok(content) = core::str::from_utf8(&bytes) {
+                                        for (idx, line) in content.lines().enumerate() {
+                                            let is_match = if case_insensitive {
+                                                line.to_ascii_lowercase().contains(&pat_lower)
+                                            } else {
+                                                line.contains(pat)
+                                            };
+                                            let selected = if invert_match { !is_match } else { is_match };
+                                            if selected {
+                                                match_count += 1;
+                                                if !count_only {
+                                                    let mut prefix = String::new();
+                                                    if multi_files {
+                                                        prefix.push_str(&format!("{}:", file));
+                                                    }
+                                                    if show_line_num {
+                                                        prefix.push_str(&format!("{}:", idx + 1));
+                                                    }
+                                                    out.push(format!("{}{}", prefix, line));
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        out.push(format!("grep: {}: binary file matches", file));
+                                    }
+                                }
+                                Err(e) => {
+                                    out.push(format!("grep: {}: {:?}", file, e));
+                                }
+                            }
+                        }
+                    }
+
+                    if count_only {
+                        out.push(format!("{}", match_count));
+                    }
+                } else {
+                    out.push(String::from("Usage: grep [-i] [-v] [-n] [-c] <pattern> [file...]"));
+                }
+            }
+            "wc" => {
+                let mut count_lines = false;
+                let mut count_words = false;
+                let mut count_bytes = false;
+                let mut files = Vec::new();
+
+                for arg in args {
+                    if *arg == "-l" {
+                        count_lines = true;
+                    } else if *arg == "-w" {
+                        count_words = true;
+                    } else if *arg == "-c" {
+                        count_bytes = true;
+                    } else if !arg.starts_with('-') {
+                        files.push(*arg);
+                    }
+                }
+
+                if !count_lines && !count_words && !count_bytes {
+                    count_lines = true;
+                    count_words = true;
+                    count_bytes = true;
+                }
+
+                let count_text = |text: &str| -> (usize, usize, usize) {
+                    let lines = text.lines().count();
+                    let words = text.split_whitespace().count();
+                    let bytes = text.as_bytes().len();
+                    (lines, words, bytes)
+                };
+
+                let format_counts = |l: usize, w: usize, b: usize, label: &str| -> String {
+                    let mut parts = Vec::new();
+                    if count_lines { parts.push(format!("{:>6}", l)); }
+                    if count_words { parts.push(format!("{:>6}", w)); }
+                    if count_bytes { parts.push(format!("{:>6}", b)); }
+                    if !label.is_empty() { parts.push(format!(" {}", label)); }
+                    parts.join(" ")
+                };
+
+                if files.is_empty() {
+                    let combined = stdin.join("\n");
+                    let (l, w, b) = count_text(&combined);
+                    out.push(format_counts(l, w, b, ""));
+                } else {
+                    let mut tot_l = 0;
+                    let mut tot_w = 0;
+                    let mut tot_b = 0;
+                    for file in &files {
+                        let target = crate::fs::resolve_relative_path(&self.cwd, file);
+                        match crate::fs::read(&target) {
+                            Ok(bytes) => {
+                                if let Ok(s) = core::str::from_utf8(&bytes) {
+                                    let (l, w, b) = count_text(s);
+                                    tot_l += l;
+                                    tot_w += w;
+                                    tot_b += b;
+                                    out.push(format_counts(l, w, b, file));
+                                } else {
+                                    out.push(format_counts(0, 0, bytes.len(), file));
+                                }
+                            }
+                            Err(e) => {
+                                out.push(format!("wc: {}: {:?}", file, e));
+                            }
+                        }
+                    }
+                    if files.len() > 1 {
+                        out.push(format_counts(tot_l, tot_w, tot_b, "total"));
+                    }
+                }
+            }
+            "head" => {
+                let mut n = 10;
+                let mut files = Vec::new();
+                let mut i = 0;
+                while i < args.len() {
+                    if args[i] == "-n" && i + 1 < args.len() {
+                        if let Ok(val) = args[i + 1].parse::<usize>() {
+                            n = val;
+                        }
+                        i += 2;
+                    } else if args[i].starts_with("-n") {
+                        if let Ok(val) = args[i][2..].parse::<usize>() {
+                            n = val;
+                        }
+                        i += 1;
+                    } else if !args[i].starts_with('-') {
+                        files.push(args[i]);
+                        i += 1;
+                    } else {
+                        i += 1;
+                    }
+                }
+
+                if files.is_empty() {
+                    for line in stdin.iter().take(n) {
+                        out.push(line.clone());
+                    }
+                } else {
+                    for file in files {
+                        let target = crate::fs::resolve_relative_path(&self.cwd, file);
+                        match crate::fs::read(&target) {
+                            Ok(bytes) => {
+                                if let Ok(s) = core::str::from_utf8(&bytes) {
+                                    for line in s.lines().take(n) {
+                                        out.push(String::from(line));
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                out.push(format!("head: {}: {:?}", file, e));
+                            }
+                        }
+                    }
+                }
+            }
+            "tail" => {
+                let mut n = 10;
+                let mut files = Vec::new();
+                let mut i = 0;
+                while i < args.len() {
+                    if args[i] == "-n" && i + 1 < args.len() {
+                        if let Ok(val) = args[i + 1].parse::<usize>() {
+                            n = val;
+                        }
+                        i += 2;
+                    } else if args[i].starts_with("-n") {
+                        if let Ok(val) = args[i][2..].parse::<usize>() {
+                            n = val;
+                        }
+                        i += 1;
+                    } else if !args[i].starts_with('-') {
+                        files.push(args[i]);
+                        i += 1;
+                    } else {
+                        i += 1;
+                    }
+                }
+
+                if files.is_empty() {
+                    let skip_count = stdin.len().saturating_sub(n);
+                    for line in stdin.iter().skip(skip_count) {
+                        out.push(line.clone());
+                    }
+                } else {
+                    for file in files {
+                        let target = crate::fs::resolve_relative_path(&self.cwd, file);
+                        match crate::fs::read(&target) {
+                            Ok(bytes) => {
+                                if let Ok(s) = core::str::from_utf8(&bytes) {
+                                    let all_lines: Vec<&str> = s.lines().collect();
+                                    let skip_count = all_lines.len().saturating_sub(n);
+                                    for line in all_lines.into_iter().skip(skip_count) {
+                                        out.push(String::from(line));
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                out.push(format!("tail: {}: {:?}", file, e));
+                            }
+                        }
+                    }
+                }
+            }
+            "history" => {
+                if self.history.is_empty() {
+                    out.push(String::from("  (empty history)"));
+                } else {
+                    for (i, h) in self.history.iter().enumerate() {
+                        out.push(format!(" {:>4}  {}", i + 1, h));
+                    }
+                }
+            }
+            "export" => {
+                if args.is_empty() {
+                    for (k, v) in &self.env_vars {
+                        out.push(format!("export {}=\"{}\"", k, v));
+                    }
+                } else {
+                    for arg in args {
+                        if let Some(eq_pos) = arg.find('=') {
+                            let k = arg[..eq_pos].trim();
+                            let v = arg[eq_pos + 1..].trim();
+                            let val = if (v.starts_with('"') && v.ends_with('"'))
+                                || (v.starts_with('\'') && v.ends_with('\''))
+                            {
+                                if v.len() >= 2 { &v[1..v.len() - 1] } else { "" }
+                            } else {
+                                v
+                            };
+                            self.set_env(k, val);
+                        } else {
+                            self.set_env(arg.trim(), "");
+                        }
+                    }
+                }
+            }
+            "env" => {
+                for (k, v) in &self.env_vars {
+                    out.push(format!("{}={}", k, v));
+                }
             }
             "stat" => {
                 if args.is_empty() {
@@ -865,6 +1515,9 @@ impl Application for TerminalApp {
     fn on_key(&mut self, key: DecodedKey) {
         match key {
             DecodedKey::Unicode(c) => match c {
+                '\t' => {
+                    self.tab_complete();
+                }
                 '\n' | '\r' => {
                     self.execute_command();
                 }
@@ -879,8 +1532,32 @@ impl Application for TerminalApp {
                 }
                 _ => {}
             },
+            DecodedKey::RawKey(KeyCode::Tab) => {
+                self.tab_complete();
+            }
+            DecodedKey::RawKey(KeyCode::ArrowUp) => {
+                self.history_up();
+            }
+            DecodedKey::RawKey(KeyCode::ArrowDown) => {
+                self.history_down();
+            }
             DecodedKey::RawKey(KeyCode::Backspace) => {
                 self.current_input.pop();
+            }
+            DecodedKey::RawKey(KeyCode::Oem7) | DecodedKey::RawKey(KeyCode::Oem5) => {
+                let ch = if self.shift_pressed { '|' } else { '\\' };
+                if self.current_input.len() < 256 {
+                    self.current_input.push(ch);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn on_raw_key(&mut self, event: pc_keyboard::KeyEvent) {
+        match event.code {
+            KeyCode::LShift | KeyCode::RShift => {
+                self.shift_pressed = event.state == pc_keyboard::KeyState::Down;
             }
             _ => {}
         }
@@ -918,4 +1595,44 @@ fn find_embedded_track(query: &str) -> Option<(&'static str, &'static [u8])> {
         }
     }
     None
+}
+
+#[test_case]
+fn test_shell_tokenize_and_prefix() {
+    let tokens = tokenize_cmd("echo \"hello world\" 'second arg' regular");
+    assert_eq!(tokens.len(), 4);
+    assert_eq!(tokens[0], "echo");
+    assert_eq!(tokens[1], "hello world");
+    assert_eq!(tokens[2], "second arg");
+    assert_eq!(tokens[3], "regular");
+
+    let candidates = alloc::vec![String::from("hel"), String::from("help"), String::from("hello")];
+    assert_eq!(longest_common_prefix(&candidates), "hel");
+}
+
+#[test_case]
+fn test_shell_env_expansion() {
+    let mut term = TerminalApp::new();
+    term.set_env("GREET", "hello");
+    assert_eq!(term.expand_env("echo $GREET $USER"), "echo hello user");
+    assert_eq!(term.expand_env("path is ${HOME}/bin"), "path is /home/user/bin");
+}
+
+#[test_case]
+fn test_pipe_decoding() {
+    for code in 0..128u8 {
+        let mut keyboard = pc_keyboard::Keyboard::new(
+            pc_keyboard::ScancodeSet1::new(),
+            pc_keyboard::layouts::Us104Key,
+            pc_keyboard::HandleControl::Ignore,
+        );
+        let _ = keyboard.add_byte(0x2a); // shift down
+        let _ = keyboard.process_keyevent(pc_keyboard::KeyEvent::new(pc_keyboard::KeyCode::LShift, pc_keyboard::KeyState::Down));
+        if let Ok(Some(ev)) = keyboard.add_byte(code) {
+            let processed = keyboard.process_keyevent(ev.clone());
+            if processed == Some(DecodedKey::Unicode('|')) || processed == Some(DecodedKey::Unicode('\\')) {
+                crate::serial_println!("[TEST] code {:#x} -> ev {:?}, processed {:?}", code, ev, processed);
+            }
+        }
+    }
 }
