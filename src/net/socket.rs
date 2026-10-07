@@ -1,5 +1,6 @@
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::sync::atomic::Ordering;
 use crate::net::ipv4::Ipv4Addr;
 use crate::net::tcp::{TcpConnection, TcpState, TCP_FLAG_ACK, TCP_FLAG_FIN, TCP_FLAG_PSH, TCP_FLAG_SYN};
 use crate::net::{poll, STACK};
@@ -37,8 +38,10 @@ impl TcpStream {
             port
         };
 
-        // Wait for handshake to complete (timeout ~3 seconds)
-        for _ in 0..150 {
+        // Wait for handshake to complete (timeout ~4 seconds)
+        let start_tick = crate::interrupts::TICKS.load(Ordering::Relaxed);
+        let mut loop_count = 0usize;
+        loop {
             poll();
             {
                 let stack = STACK.lock();
@@ -57,7 +60,15 @@ impl TcpStream {
                     }
                 }
             }
-            for _ in 0..20000 {
+
+            let now = crate::interrupts::TICKS.load(Ordering::Relaxed);
+            loop_count += 1;
+            // 400 ticks = 4 seconds at 100Hz, or fallback 4000 loops
+            if now.wrapping_sub(start_tick) >= 400 || loop_count >= 4000 {
+                break;
+            }
+
+            for _ in 0..5000 {
                 core::hint::spin_loop();
             }
         }
@@ -108,7 +119,10 @@ impl TcpStream {
             return Ok(0);
         }
 
-        for _ in 0..100 {
+        let start_tick = crate::interrupts::TICKS.load(Ordering::Relaxed);
+        let mut loop_count = 0usize;
+
+        loop {
             poll();
             {
                 let mut stack = STACK.lock();
@@ -130,26 +144,59 @@ impl TcpStream {
                 }
             }
 
-            for _ in 0..10000 {
+            let now = crate::interrupts::TICKS.load(Ordering::Relaxed);
+            loop_count += 1;
+            // 400 ticks = 4 seconds at 100Hz, or fallback 4000 loops
+            if now.wrapping_sub(start_tick) >= 400 || loop_count >= 4000 {
+                break;
+            }
+
+            for _ in 0..5000 {
                 core::hint::spin_loop();
             }
         }
 
-        Ok(0) // Timed out waiting for more data
+        // Check whether remote closed or connection timed out
+        let is_eof = {
+            let stack = STACK.lock();
+            if let Some(stack) = stack.as_ref() {
+                if let Some(conn) = stack.tcp_conns.get(&(self.local_port, self.remote_ip, self.remote_port)) {
+                    conn.state == TcpState::CloseWait || conn.state == TcpState::Closed
+                } else {
+                    true
+                }
+            } else {
+                true
+            }
+        };
+
+        if is_eof {
+            Ok(0)
+        } else {
+            Err("Connection timed out waiting for data")
+        }
     }
 
     pub fn read_to_end(&mut self, max_bytes: usize) -> Result<Vec<u8>, &'static str> {
         let mut out = Vec::new();
         let mut chunk = [0u8; 1024];
 
-        for _ in 0..200 {
-            let n = self.read(&mut chunk)?;
-            if n == 0 {
-                break;
-            }
-            out.extend_from_slice(&chunk[..n]);
-            if out.len() >= max_bytes {
-                break;
+        loop {
+            match self.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => {
+                    out.extend_from_slice(&chunk[..n]);
+                    if out.len() >= max_bytes {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    if !out.is_empty() {
+                        break;
+                    } else {
+                        return Err(e);
+                    }
+                }
             }
         }
 

@@ -11,6 +11,7 @@ pub mod udp;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
+use core::sync::atomic::Ordering;
 use spin::Mutex;
 
 use crate::drivers::rtl8139;
@@ -306,11 +307,18 @@ impl NetworkStack {
                 }
                 TcpState::FinWait1 => {
                     if (hdr.flags & TCP_FLAG_ACK) != 0 {
-                        conn.state = TcpState::FinWait2;
+                        conn.state = TcpState::Closed;
                     }
                     if (hdr.flags & TCP_FLAG_FIN) != 0 {
                         conn.remote_seq = hdr.seq_num.wrapping_add(1);
                         conn.state = TcpState::Closed;
+                        send_ack = true;
+                        ack_num = conn.remote_seq;
+                        local_seq = conn.local_seq;
+                    }
+                }
+                TcpState::CloseWait => {
+                    if (hdr.flags & TCP_FLAG_FIN) != 0 {
                         send_ack = true;
                         ack_num = conn.remote_seq;
                         local_seq = conn.local_seq;
@@ -448,14 +456,22 @@ pub fn resolve_hostname(host: &str) -> Option<Ipv4Addr> {
     }
 
     // 3. Poll for response WITHOUT holding STACK lock during poll()
-    for _ in 0..150 {
+    let start_tick = crate::interrupts::TICKS.load(Ordering::Relaxed);
+    let mut loop_count = 0usize;
+    loop {
         poll();
         if let Some(stack) = STACK.lock().as_ref() {
             if let Some(ip) = stack.dns_resolver.get_cached(&host_str) {
                 return Some(ip);
             }
         }
-        for _ in 0..10000 {
+        let now = crate::interrupts::TICKS.load(Ordering::Relaxed);
+        loop_count += 1;
+        // 300 ticks = 3 seconds at 100Hz, or fallback 3000 loops
+        if now.wrapping_sub(start_tick) >= 300 || loop_count >= 3000 {
+            break;
+        }
+        for _ in 0..5000 {
             core::hint::spin_loop();
         }
     }

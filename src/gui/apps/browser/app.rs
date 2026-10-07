@@ -246,18 +246,18 @@ impl BrowserApp {
         };
 
         if response_bytes.is_empty() {
-            self.status_text = String::from("Error: Empty response or timeout");
+            self.status_text = String::from("Error: Empty response");
             let err_html = format!(
-                "<html><head><title>No Response</title></head><body>\
-                <h1>No Response From Server</h1>\
-                <p>The host at <strong>{}</strong> ({}:{}) did not return any data or the connection timed out.</p>\
+                "<html><head><title>Empty Response</title></head><body>\
+                <h1>Empty Response From Server</h1>\
+                <p>The host at <strong>{}</strong> ({}:{}) connected successfully but closed the connection without returning any response data.</p>\
                 <hr>\
                 <p>If testing local HTTP, make sure a web server is running on <code>10.0.2.2:8000</code>.</p>\
                 </body></html>",
                 host, ip, port
             );
             self.layout = layout_html(&err_html, self.last_width.saturating_sub(40));
-            self.page_title = String::from("Mouros Browser - No Response");
+            self.page_title = String::from("Mouros Browser - Empty Response");
             return;
         }
 
@@ -286,14 +286,54 @@ impl BrowserApp {
             .and_then(|s| s.parse().ok())
             .unwrap_or(200);
 
-        // Check for redirects (301, 302, 307)
-        if status_code == 301 || status_code == 302 || status_code == 307 {
+        // Check for redirects (301, 302, 303, 307, 308)
+        if status_code == 301 || status_code == 302 || status_code == 303 || status_code == 307 || status_code == 308 {
             for line in headers.lines() {
                 if line.to_lowercase().starts_with("location:") {
                     let new_loc = line[9..].trim();
-                    self.status_text = format!("Redirecting to {}...", new_loc);
-                    self.navigate_to(new_loc, add_to_history);
-                    return;
+                    let target_url = if new_loc.starts_with("http://") || new_loc.starts_with("https://") {
+                        String::from(new_loc)
+                    } else if new_loc.starts_with("//") {
+                        format!("http:{}", new_loc)
+                    } else if new_loc.starts_with('/') {
+                        format!("http://{}{}", host, new_loc)
+                    } else {
+                        format!("http://{}/{}", host, new_loc)
+                    };
+
+                    if target_url.starts_with("https://") {
+                        self.warning_banner = Some(format!(
+                            "Notice: Server redirected to HTTPS ({}). Mouros OS does not have TLS.",
+                            target_url
+                        ));
+                        self.status_text = format!("HTTP {} Redirect to HTTPS (unsupported)", status_code);
+                        let err_html = format!(
+                            "<html><head><title>HTTPS Redirection</title></head><body>\
+                            <h1>HTTPS Redirection Not Supported</h1>\
+                            <p>The server at <strong>{}</strong> responded with <strong>HTTP {} Redirect</strong> to an encrypted HTTPS URL:</p>\
+                            <p><strong>{}</strong></p>\
+                            <hr>\
+                            <h3>Why did this happen?</h3>\
+                            <p>Sites hosted on <strong>GitHub Pages (*.github.io)</strong> and modern CDNs enforce HTTPS (HSTS) and automatically redirect all incoming HTTP requests to HTTPS.</p>\
+                            <p>Mouros OS runs bare-metal without a TLS/SSL engine, so encrypted connections cannot be negotiated.</p>\
+                            <h3>How to test your HTML on Mouros OS:</h3>\
+                            <ul>\
+                              <li>Host your HTML file locally over plain HTTP on your computer: run <code>python3 -m http.server 8000</code> in your folder, then open <code>http://10.0.2.2:8000/hw.html</code>.</li>\
+                              <li>Or test with live HTTP domains that support plain HTTP without HTTPS enforcement (such as <code>http://example.com</code>).</li>\
+                            </ul>\
+                            </body></html>",
+                            host, status_code, target_url
+                        );
+                        self.layout = layout_html(&err_html, self.last_width.saturating_sub(40));
+                        self.page_title = String::from("Mouros Browser - HTTPS Redirect");
+                        self.url_input = full_url.clone();
+                        self.current_url = full_url.clone();
+                        return;
+                    } else {
+                        self.status_text = format!("Redirecting to {}...", target_url);
+                        self.navigate_to(&target_url, add_to_history);
+                        return;
+                    }
                 }
             }
         }
