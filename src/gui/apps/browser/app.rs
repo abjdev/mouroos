@@ -215,6 +215,15 @@ impl BrowserApp {
         self.status_text = String::from("Sending HTTP GET request...");
         if let Err(e) = stream.write(request.as_bytes()) {
             self.status_text = format!("Send error: {}", e);
+            let err_html = format!(
+                "<html><head><title>Network Send Error</title></head><body>\
+                <h1>Failed to Send Request</h1>\
+                <p>Could not send HTTP request to <strong>{}:{}</strong>: {}</p>\
+                </body></html>",
+                ip, port, e
+            );
+            self.layout = layout_html(&err_html, self.last_width.saturating_sub(40));
+            self.page_title = String::from("Mouros Browser - Send Error");
             return;
         }
 
@@ -223,9 +232,34 @@ impl BrowserApp {
             Ok(b) => b,
             Err(e) => {
                 self.status_text = format!("Read error: {}", e);
+                let err_html = format!(
+                    "<html><head><title>Network Read Error</title></head><body>\
+                    <h1>Failed to Read Response</h1>\
+                    <p>Error while reading response from <strong>{}:{}</strong>: {}</p>\
+                    </body></html>",
+                    ip, port, e
+                );
+                self.layout = layout_html(&err_html, self.last_width.saturating_sub(40));
+                self.page_title = String::from("Mouros Browser - Read Error");
                 return;
             }
         };
+
+        if response_bytes.is_empty() {
+            self.status_text = String::from("Error: Empty response or timeout");
+            let err_html = format!(
+                "<html><head><title>No Response</title></head><body>\
+                <h1>No Response From Server</h1>\
+                <p>The host at <strong>{}</strong> ({}:{}) did not return any data or the connection timed out.</p>\
+                <hr>\
+                <p>If testing local HTTP, make sure a web server is running on <code>10.0.2.2:8000</code>.</p>\
+                </body></html>",
+                host, ip, port
+            );
+            self.layout = layout_html(&err_html, self.last_width.saturating_sub(40));
+            self.page_title = String::from("Mouros Browser - No Response");
+            return;
+        }
 
         // Parse HTTP status & body
         let response_str = String::from_utf8_lossy(&response_bytes);

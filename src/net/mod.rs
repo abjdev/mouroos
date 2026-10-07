@@ -20,7 +20,7 @@ use crate::net::dns::{DnsResolver, DNS_PORT};
 use crate::net::ethernet::{EthernetFrame, MacAddress, ETHERTYPE_ARP, ETHERTYPE_IPV4};
 use crate::net::icmp::{IcmpEchoPacket, ICMP_TYPE_ECHO_REPLY, ICMP_TYPE_ECHO_REQUEST};
 use crate::net::ipv4::{Ipv4Addr, Ipv4Header, PROTO_ICMP, PROTO_TCP, PROTO_UDP};
-use crate::net::tcp::{TcpConnection, TcpHeader, TcpState, TCP_FLAG_ACK, TCP_FLAG_FIN, TCP_FLAG_SYN};
+use crate::net::tcp::{TcpConnection, TcpHeader, TcpState, TCP_FLAG_ACK, TCP_FLAG_FIN, TCP_FLAG_RST, TCP_FLAG_SYN};
 use crate::net::udp::UdpHeader;
 
 #[derive(Clone, Debug)]
@@ -58,13 +58,18 @@ pub static STACK: Mutex<Option<NetworkStack>> = Mutex::new(None);
 
 impl NetworkStack {
     pub fn new(mac: MacAddress) -> Self {
+        let mut arp_table = ArpTable::new();
+        // Pre-populate router and DNS server MACs for QEMU SLIRP (52:55:0A:00:02:02)
+        arp_table.insert(Ipv4Addr::new(10, 0, 2, 2), MacAddress::new([0x52, 0x55, 0x0A, 0x00, 0x02, 0x02]));
+        arp_table.insert(Ipv4Addr::new(10, 0, 2, 3), MacAddress::new([0x52, 0x55, 0x0A, 0x00, 0x02, 0x02]));
+
         NetworkStack {
             mac,
             ip: Ipv4Addr::new(10, 0, 2, 15), // Standard QEMU default
             subnet_mask: Ipv4Addr::new(255, 255, 255, 0),
             gateway: Ipv4Addr::new(10, 0, 2, 2),
             dns_server: Ipv4Addr::new(10, 0, 2, 3),
-            arp_table: ArpTable::new(),
+            arp_table,
             dns_resolver: DnsResolver::new(),
             dhcp_client: DhcpClient::new(),
             tcp_conns: BTreeMap::new(),
@@ -242,11 +247,7 @@ impl NetworkStack {
                                     }
                                 } else if udp_hdr.src_port == DNS_PORT {
                                     // Parse DNS response
-                                    // Header ID at udp_payload[0..2]
-                                    if udp_payload.len() >= 12 {
-                                        let qid = u16::from_be_bytes([udp_payload[0], udp_payload[1]]);
-                                        self.dns_resolver.parse_response("", udp_payload, qid);
-                                    }
+                                    self.dns_resolver.parse_response(udp_payload);
                                 }
                             }
                         }
@@ -270,6 +271,11 @@ impl NetworkStack {
         let mut local_seq = 0u32;
 
         if let Some(conn) = self.tcp_conns.get_mut(&key) {
+            if (hdr.flags & TCP_FLAG_RST) != 0 {
+                conn.state = TcpState::Closed;
+                return;
+            }
+
             match conn.state {
                 TcpState::SynSent => {
                     if (hdr.flags & (TCP_FLAG_SYN | TCP_FLAG_ACK)) == (TCP_FLAG_SYN | TCP_FLAG_ACK) {
@@ -419,27 +425,38 @@ pub fn resolve_hostname(host: &str) -> Option<Ipv4Addr> {
         return Some(ip);
     }
 
-    if let Some(stack) = STACK.lock().as_mut() {
+    // 1. Check cache first
+    if let Some(stack) = STACK.lock().as_ref() {
         if let Some(ip) = stack.dns_resolver.get_cached(host) {
             return Some(ip);
         }
+    }
 
-        let mut query = Vec::new();
-        let _qid = stack.dns_resolver.build_query(host, &mut query);
-        let dns_server = stack.dns_server;
-        let src_port = stack.allocate_ephemeral_port();
-        stack.send_udp(dns_server, src_port, DNS_PORT, &query);
-        let host_str = String::from(host);
+    // 2. Build DNS query and send UDP packet; release STACK.lock() immediately
+    let host_str = String::from(host);
+    let mut query = Vec::new();
+    {
+        let mut guard = STACK.lock();
+        if let Some(stack) = guard.as_mut() {
+            let _qid = stack.dns_resolver.build_query(host, &mut query);
+            let dns_server = stack.dns_server;
+            let src_port = stack.allocate_ephemeral_port();
+            stack.send_udp(dns_server, src_port, DNS_PORT, &query);
+        } else {
+            return None;
+        }
+    }
 
-        // Drop lock during polling loop
-        for _ in 0..100 {
-            poll();
-            if let Some(ip) = STACK.lock().as_mut()?.dns_resolver.get_cached(&host_str) {
+    // 3. Poll for response WITHOUT holding STACK lock during poll()
+    for _ in 0..150 {
+        poll();
+        if let Some(stack) = STACK.lock().as_ref() {
+            if let Some(ip) = stack.dns_resolver.get_cached(&host_str) {
                 return Some(ip);
             }
-            for _ in 0..10000 {
-                core::hint::spin_loop();
-            }
+        }
+        for _ in 0..10000 {
+            core::hint::spin_loop();
         }
     }
 

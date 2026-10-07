@@ -50,6 +50,8 @@ impl TcpStream {
                                 remote_port,
                                 is_closed: false,
                             });
+                        } else if conn.state == TcpState::Closed {
+                            return Err("Connection reset by peer");
                         }
                     }
                 }

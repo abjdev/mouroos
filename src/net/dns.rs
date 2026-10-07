@@ -9,13 +9,24 @@ pub const CLASS_IN: u16 = 1;
 
 pub struct DnsResolver {
     cache: BTreeMap<String, Ipv4Addr>,
+    pending_queries: BTreeMap<u16, String>,
     next_id: u16,
 }
 
 impl DnsResolver {
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
+        let mut cache = BTreeMap::new();
+        // Pre-seed known common hosts so they resolve immediately
+        cache.insert(String::from("example.com"), Ipv4Addr::new(93, 184, 215, 14));
+        cache.insert(String::from("www.example.com"), Ipv4Addr::new(93, 184, 215, 14));
+        cache.insert(String::from("localhost"), Ipv4Addr::new(127, 0, 0, 1));
+        cache.insert(String::from("router"), Ipv4Addr::new(10, 0, 2, 2));
+        cache.insert(String::from("gateway"), Ipv4Addr::new(10, 0, 2, 2));
+        cache.insert(String::from("dns"), Ipv4Addr::new(10, 0, 2, 3));
+
         DnsResolver {
-            cache: BTreeMap::new(),
+            cache,
+            pending_queries: BTreeMap::new(),
             next_id: 0x4321,
         }
     }
@@ -31,6 +42,7 @@ impl DnsResolver {
     pub fn build_query(&mut self, host: &str, out: &mut Vec<u8>) -> u16 {
         self.next_id = self.next_id.wrapping_add(1);
         let id = self.next_id;
+        self.pending_queries.insert(id, String::from(host));
 
         out.clear();
         // Header
@@ -58,15 +70,16 @@ impl DnsResolver {
         id
     }
 
-    pub fn parse_response(&mut self, host: &str, raw: &[u8], query_id: u16) -> Option<Ipv4Addr> {
+    pub fn parse_response(&mut self, raw: &[u8]) -> Option<Ipv4Addr> {
         if raw.len() < 12 {
             return None;
         }
 
         let id = u16::from_be_bytes([raw[0], raw[1]]);
-        if id != query_id {
-            return None;
-        }
+        let host = match self.pending_queries.remove(&id) {
+            Some(h) => h,
+            None => return None,
+        };
 
         let flags = u16::from_be_bytes([raw[2], raw[3]]);
         if (flags & 0x8000) == 0 {
@@ -120,7 +133,8 @@ impl DnsResolver {
                     raw[offset + 2],
                     raw[offset + 3],
                 );
-                self.insert_cache(host, ip);
+                crate::serial_println!("[DNS] Resolved {} -> {}", host, ip);
+                self.insert_cache(&host, ip);
                 return Some(ip);
             }
 
@@ -138,9 +152,17 @@ fn skip_name(data: &[u8], mut offset: usize) -> Option<usize> {
             return Some(offset + 1);
         } else if (len & 0xC0) == 0xC0 {
             // Compressed pointer (2 bytes)
-            return Some(offset + 2);
+            if offset + 2 <= data.len() {
+                return Some(offset + 2);
+            } else {
+                return None;
+            }
         } else {
-            offset += 1 + (len as usize);
+            let next = offset + 1 + (len as usize);
+            if next > data.len() {
+                return None;
+            }
+            offset = next;
         }
     }
     None
