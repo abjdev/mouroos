@@ -10,11 +10,12 @@ use pc_keyboard::{DecodedKey, KeyCode};
 use x86_64::instructions::port::Port;
 
 pub const COMMANDS: &[&str] = &[
-    "beep", "calc", "cat", "cd", "clear", "cp", "df", "doom", "echo",
-    "elf", "env", "export", "free", "grep", "head", "help", "history",
-    "kill", "ls", "mem", "mkdir", "mp3", "mv", "ps", "pwd", "reboot",
-    "rm", "shutdown", "stat", "sync", "sysinfo", "tail", "theme",
-    "time", "top", "touch", "uname", "wait", "wc",
+    "beep", "browser", "calc", "cat", "cd", "clear", "cp", "curl", "df",
+    "dns", "doom", "echo", "elf", "env", "export", "free", "grep", "head",
+    "help", "history", "ifconfig", "kill", "ls", "mem", "mkdir", "mp3",
+    "mv", "ping", "ps", "pwd", "reboot", "rm", "shutdown", "stat",
+    "sync", "sysinfo", "tail", "theme", "time", "top", "touch",
+    "uname", "wait", "wc",
 ];
 
 fn longest_common_prefix(candidates: &[String]) -> String {
@@ -476,6 +477,11 @@ impl TerminalApp {
                 out.push(String::from("  doom [cmd]- DOOM 1993 engine"));
                 out.push(String::from("  explorer [d] - Open Mouros Explorer GUI file manager"));
                 out.push(String::from("  notepad [f]  - Open Notepad GUI text editor"));
+                out.push(String::from("  browser [url]- Open Mouros Web Browser"));
+                out.push(String::from("  ifconfig  - View or configure network interfaces"));
+                out.push(String::from("  ping <ip> - Send ICMP Echo requests to host"));
+                out.push(String::from("  dns <dom> - Query domain name from DNS"));
+                out.push(String::from("  curl <url>- Transfer data from HTTP server"));
                 out.push(String::from("  beep      - Test PC speaker sound"));
                 out.push(String::from("  reboot    - Reboot the computer"));
                 out.push(String::from("  shutdown  - Power off system"));
@@ -1438,6 +1444,269 @@ impl TerminalApp {
                 };
                 self.pending_action = Some(crate::gui::window::DesktopAction::OpenNotepad(target.clone()));
                 out.push(format!("Opening Notepad at {}...", target));
+            }
+            "browser" => {
+                let target = if args.is_empty() {
+                    None
+                } else {
+                    Some(String::from(args[0]))
+                };
+                self.pending_action = Some(crate::gui::window::DesktopAction::OpenBrowser(target.clone()));
+                if let Some(t) = target {
+                    out.push(format!("Opening Mouros Browser at {}...", t));
+                } else {
+                    out.push(String::from("Opening Mouros Browser..."));
+                }
+            }
+            "ifconfig" => {
+                if args.is_empty() {
+                    let info = crate::net::get_info();
+                    if let Some((mac, ip, mask, gw, dns, stats)) = info {
+                        let is_up = crate::drivers::rtl8139::is_present();
+                        let flags_str = if is_up { "UP,BROADCAST,RUNNING,MULTICAST" } else { "LOOPBACK,RUNNING" };
+                        out.push(format!("eth0: flags=<{}> mtu 1500", flags_str));
+                        out.push(format!("        inet {}  netmask {}  gateway {}", ip, mask, gw));
+                        out.push(format!("        ether {}  dns {}", mac, dns));
+                        out.push(format!("        RX packets {}  bytes {} ({} KB)", stats.rx_packets, stats.rx_bytes, stats.rx_bytes / 1024));
+                        out.push(format!("        TX packets {}  bytes {} ({} KB)", stats.tx_packets, stats.tx_bytes, stats.tx_bytes / 1024));
+                    } else {
+                        out.push(String::from("Network stack not initialized."));
+                    }
+                } else if args.len() >= 2 {
+                    let new_ip = match crate::net::ipv4::Ipv4Addr::parse(args[1]) {
+                        Some(ip) => ip,
+                        None => {
+                            out.push(format!("Invalid IP address: {}", args[1]));
+                            return;
+                        }
+                    };
+                    let mut mask = crate::net::ipv4::Ipv4Addr::new(255, 255, 255, 0);
+                    let mut gw = crate::net::ipv4::Ipv4Addr::new(10, 0, 2, 2);
+                    let mut dns = crate::net::ipv4::Ipv4Addr::new(10, 0, 2, 3);
+                    let mut i = 2;
+                    while i < args.len() {
+                        if args[i] == "netmask" && i + 1 < args.len() {
+                            if let Some(m) = crate::net::ipv4::Ipv4Addr::parse(args[i + 1]) { mask = m; }
+                            i += 2;
+                        } else if (args[i] == "gw" || args[i] == "gateway") && i + 1 < args.len() {
+                            if let Some(g) = crate::net::ipv4::Ipv4Addr::parse(args[i + 1]) { gw = g; }
+                            i += 2;
+                        } else if args[i] == "dns" && i + 1 < args.len() {
+                            if let Some(d) = crate::net::ipv4::Ipv4Addr::parse(args[i + 1]) { dns = d; }
+                            i += 2;
+                        } else {
+                            i += 1;
+                        }
+                    }
+                    crate::net::set_static_config(new_ip, mask, gw, dns);
+                    out.push(format!("eth0: configured static IP {} mask {} gw {} dns {}", new_ip, mask, gw, dns));
+                } else {
+                    out.push(String::from("Usage: ifconfig [eth0 <ip> [netmask <mask>] [gw <gw>] [dns <dns>]]"));
+                }
+            }
+            "ping" => {
+                if args.is_empty() {
+                    out.push(String::from("Usage: ping [-c count] <ip|host>"));
+                    return;
+                }
+                let mut count = 4;
+                let mut target_str = "";
+                let mut i = 0;
+                while i < args.len() {
+                    if args[i] == "-c" && i + 1 < args.len() {
+                        if let Ok(c) = args[i + 1].parse::<u32>() { count = c; }
+                        i += 2;
+                    } else {
+                        target_str = args[i];
+                        i += 1;
+                    }
+                }
+
+                if target_str.is_empty() {
+                    out.push(String::from("Usage: ping [-c count] <ip|host>"));
+                    return;
+                }
+
+                let target_ip = match crate::net::resolve_hostname(target_str) {
+                    Some(ip) => ip,
+                    None => {
+                        out.push(format!("ping: cannot resolve {}: Unknown host", target_str));
+                        return;
+                    }
+                };
+
+                out.push(format!("PING {} ({}): 56 data bytes", target_str, target_ip));
+                let mut received = 0;
+
+                for seq in 1..=count {
+                    let mut payload = [0u8; 56];
+                    for (b_idx, b) in payload.iter_mut().enumerate() { *b = (b_idx & 0xFF) as u8; }
+
+                    let mut echo_buf = Vec::new();
+                    crate::net::icmp::IcmpEchoPacket::build_echo_request(0x1234, seq as u16, &payload, &mut echo_buf);
+
+                    {
+                        let mut stack = crate::net::STACK.lock();
+                        if let Some(stack) = stack.as_mut() {
+                            stack.send_ipv4(target_ip, crate::net::ipv4::PROTO_ICMP, &echo_buf);
+                        }
+                    }
+
+                    let mut got_reply = false;
+                    for _ in 0..100 {
+                        crate::net::poll();
+                        {
+                            let mut stack = crate::net::STACK.lock();
+                            if let Some(stack) = stack.as_mut() {
+                                if let Some(pos) = stack.ping_replies.iter().position(|r| r.seq == seq as u16 && r.sender == target_ip) {
+                                    stack.ping_replies.remove(pos);
+                                    got_reply = true;
+                                    break;
+                                }
+                            }
+                        }
+                        for _ in 0..10000 {
+                            core::hint::spin_loop();
+                        }
+                    }
+
+                    if got_reply {
+                        received += 1;
+                        let rtt_ms = 1;
+                        out.push(format!("64 bytes from {}: icmp_seq={} ttl=64 time={} ms", target_ip, seq, rtt_ms));
+                    } else {
+                        out.push(format!("Request timeout for icmp_seq {}", seq));
+                    }
+                }
+
+                let loss = if count > 0 { (count - received) * 100 / count } else { 0 };
+                out.push(format!("--- {} ping statistics ---", target_str));
+                out.push(format!("{} packets transmitted, {} received, {}% packet loss", count, received, loss));
+            }
+            "dns" => {
+                if args.is_empty() {
+                    out.push(String::from("Usage: dns <hostname>"));
+                    return;
+                }
+                let host = args[0];
+                let dns_server = crate::net::get_info().map(|(_, _, _, _, dns, _)| dns).unwrap_or(crate::net::ipv4::Ipv4Addr::new(10, 0, 2, 3));
+                out.push(format!("Server:     {}", dns_server));
+                out.push(format!("Address:    {}#53", dns_server));
+                out.push(String::new());
+                match crate::net::resolve_hostname(host) {
+                    Some(ip) => {
+                        out.push(format!("Name:       {}", host));
+                        out.push(format!("Address:    {}", ip));
+                    }
+                    None => {
+                        out.push(format!("** server can't find {}: NXDOMAIN", host));
+                    }
+                }
+            }
+            "curl" => {
+                if args.is_empty() {
+                    out.push(String::from("Usage: curl [-v] <url>"));
+                    return;
+                }
+                let verbose = args.iter().any(|&a| a == "-v");
+                let url = args.iter().find(|&&a| a != "-v").copied().unwrap_or("");
+                if url.is_empty() {
+                    out.push(String::from("Usage: curl [-v] <url>"));
+                    return;
+                }
+
+                if url.starts_with("https://") {
+                    out.push(String::from("curl: (1) Protocol 'https' not supported (Mouros OS does not have TLS). Please use http://"));
+                    return;
+                }
+
+                let trimmed = if url.starts_with("http://") { &url[7..] } else { url };
+                let (host_port, path) = match trimmed.find('/') {
+                    Some(idx) => (&trimmed[..idx], &trimmed[idx..]),
+                    None => (trimmed, "/"),
+                };
+                let (host, port) = match host_port.find(':') {
+                    Some(idx) => {
+                        let h = &host_port[..idx];
+                        let p = host_port[idx + 1..].parse::<u16>().unwrap_or(80);
+                        (h, p)
+                    }
+                    None => (host_port, 80),
+                };
+
+                let ip = match crate::net::resolve_hostname(host) {
+                    Some(ip) => ip,
+                    None => {
+                        out.push(format!("curl: (6) Could not resolve host: {}", host));
+                        return;
+                    }
+                };
+
+                if verbose {
+                    out.push(format!("* Connecting to {} ({}) port {}", host, ip, port));
+                }
+
+                let mut stream = match crate::net::socket::TcpStream::connect(ip, port) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        out.push(format!("curl: (7) Failed to connect to {} port {}: {}", host, port, e));
+                        return;
+                    }
+                };
+
+                if verbose {
+                    out.push(String::from("* Connected successfully"));
+                    out.push(format!("> GET {} HTTP/1.1", path));
+                    out.push(format!("> Host: {}", host));
+                    out.push(String::from("> User-Agent: curl/7.88.1 (Mouros OS)"));
+                    out.push(String::from("> Accept: */*"));
+                    out.push(String::new());
+                }
+
+                let req = format!(
+                    "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: curl/7.88.1 (Mouros OS)\r\nAccept: */*\r\nConnection: close\r\n\r\n",
+                    path, host
+                );
+
+                if let Err(e) = stream.write(req.as_bytes()) {
+                    out.push(format!("curl: (55) Send failure: {}", e));
+                    return;
+                }
+
+                let resp_bytes = match stream.read_to_end(65536) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        out.push(format!("curl: (56) Recv failure: {}", e));
+                        return;
+                    }
+                };
+
+                let resp_str = String::from_utf8_lossy(&resp_bytes);
+                let header_end = resp_str.find("\r\n\r\n").or_else(|| resp_str.find("\n\n"));
+
+                let (headers, body) = match header_end {
+                    Some(idx) => {
+                        let h = &resp_str[..idx];
+                        let b = if resp_str[idx..].starts_with("\r\n\r\n") {
+                            &resp_str[idx + 4..]
+                        } else {
+                            &resp_str[idx + 2..]
+                        };
+                        (h, b)
+                    }
+                    None => ("", resp_str.as_ref()),
+                };
+
+                if verbose {
+                    for hl in headers.lines() {
+                        out.push(format!("< {}", hl));
+                    }
+                    out.push(String::new());
+                }
+
+                for bl in body.lines() {
+                    out.push(String::from(bl));
+                }
             }
             unknown => {
                 self.lines.push(format!("Unknown command: '{}'. Type 'help' for commands.", unknown));

@@ -99,3 +99,35 @@ pub fn find_vga_device() -> Option<PciDevice> {
     }
     None
 }
+
+/// Scans PCI bus to find the Realtek RTL8139 Network Interface Card (0x10EC:0x8139).
+pub fn find_rtl8139_device() -> Option<PciDevice> {
+    for bus in 0..=1 {
+        for slot in 0..32 {
+            let vendor_and_device = unsafe { pci_read_32(bus, slot, 0, 0) };
+            let vendor_id = (vendor_and_device & 0xFFFF) as u16;
+            let device_id = ((vendor_and_device >> 16) & 0xFFFF) as u16;
+
+            if vendor_id == 0xFFFF {
+                continue;
+            }
+
+            if vendor_id == 0x10EC && device_id == 0x8139 {
+                let class_rev = unsafe { pci_read_32(bus, slot, 0, 0x08) };
+                let class_code = ((class_rev >> 24) & 0xFF) as u8;
+                let subclass = ((class_rev >> 16) & 0xFF) as u8;
+
+                return Some(PciDevice {
+                    bus,
+                    slot,
+                    func: 0,
+                    vendor_id,
+                    device_id,
+                    class_code,
+                    subclass,
+                });
+            }
+        }
+    }
+    None
+}

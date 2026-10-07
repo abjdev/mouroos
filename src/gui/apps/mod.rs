@@ -1,3 +1,4 @@
+pub mod browser;
 pub mod calculator;
 pub mod doom;
 pub mod elf_runner;
@@ -10,6 +11,7 @@ pub mod snake;
 pub mod sysinfo;
 pub mod terminal;
 
+pub use browser::BrowserApp;
 pub use calculator::CalculatorApp;
 pub use doom::DoomApp;
 pub use elf_runner::ElfRunnerApp;

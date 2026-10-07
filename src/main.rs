@@ -64,6 +64,10 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // Initialize AC97 Audio Device
     ac97::init(phys_mem_offset, &mut frame_allocator);
 
+    // Initialize RTL8139 Network Interface Controller & Network Stack
+    mouros::drivers::rtl8139::init(phys_mem_offset, &mut frame_allocator);
+    mouros::net::init();
+
     // Initialize PS/2 Mouse
     mouse::init(bga::DEFAULT_WIDTH as isize, bga::DEFAULT_HEIGHT as isize);
 

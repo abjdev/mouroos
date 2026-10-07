@@ -15,6 +15,7 @@ pub enum AppIcon {
     Doom,
     Power,
     FileManager,
+    Browser,
 }
 
 impl AppIcon {
@@ -31,6 +32,7 @@ impl AppIcon {
             8 => AppIcon::ElfRunner,
             9 => AppIcon::Doom,
             10 => AppIcon::FileManager,
+            11 => AppIcon::Browser,
             _ => AppIcon::Power,
         }
     }
@@ -315,6 +317,33 @@ pub fn draw_icon_24(fb: &mut Framebuffer, x: isize, y: isize, icon: AppIcon) {
             // Folder front highlight line
             fb.fill_rect(x + 2, y + 9, 20, 1, Color::from_rgb(254, 240, 138));
         }
+
+        AppIcon::Browser => {
+            // Retro World Globe / Web Browser Icon (24x24)
+            let ocean = Color::from_rgb(37, 99, 235);
+            let land = Color::from_rgb(34, 197, 94);
+            let ring = Color::from_rgb(251, 191, 36);
+
+            fb.fill_rect(x + 5, y + 2, 14, 20, ocean);
+            fb.fill_rect(x + 2, y + 5, 20, 14, ocean);
+            fb.fill_rect(x + 3, y + 3, 18, 18, ocean);
+
+            // Continents
+            fb.fill_rect(x + 6, y + 6, 4, 6, land);
+            fb.fill_rect(x + 13, y + 5, 5, 4, land);
+            fb.fill_rect(x + 11, y + 12, 6, 5, land);
+            fb.fill_rect(x + 7, y + 14, 3, 3, land);
+
+            // Lat / Long equator & meridian lines
+            fb.fill_rect(x + 3, y + 11, 18, 1, Color::from_rgb(147, 197, 253));
+            fb.fill_rect(x + 11, y + 3, 1, 18, Color::from_rgb(147, 197, 253));
+
+            // Gold orbital ring
+            fb.draw_pixel(x + 1, y + 17, ring);
+            fb.draw_pixel(x + 2, y + 16, ring);
+            fb.draw_pixel(x + 21, y + 6, ring);
+            fb.draw_pixel(x + 22, y + 5, ring);
+        }
     }
 }
 
@@ -467,6 +496,23 @@ pub fn draw_icon_16(fb: &mut Framebuffer, x: isize, y: isize, icon: AppIcon) {
             fb.fill_rect(x + 3, y + 2, 10, 5, Color::WHITE);
             fb.fill_rect(x + 1, y + 6, 14, 8, Color::from_rgb(251, 191, 36));
             fb.draw_rect(x + 1, y + 6, 14, 8, Color::from_rgb(180, 83, 9));
+        }
+
+        AppIcon::Browser => {
+            // 16x16 World Globe
+            let ocean = Color::from_rgb(37, 99, 235);
+            let land = Color::from_rgb(34, 197, 94);
+            fb.fill_rect(x + 3, y + 1, 10, 14, ocean);
+            fb.fill_rect(x + 1, y + 3, 14, 10, ocean);
+            fb.fill_rect(x + 2, y + 2, 12, 12, ocean);
+
+            // Continents
+            fb.fill_rect(x + 4, y + 4, 3, 4, land);
+            fb.fill_rect(x + 9, y + 8, 4, 3, land);
+
+            // Meridian & Equator
+            fb.fill_rect(x + 2, y + 7, 12, 1, Color::from_rgb(147, 197, 253));
+            fb.fill_rect(x + 7, y + 2, 1, 12, Color::from_rgb(147, 197, 253));
         }
     }
 }

@@ -15,6 +15,7 @@ pub enum DesktopAction {
     OpenMusic,
     OpenElf(alloc::string::String),
     OpenFileManager(alloc::string::String),
+    OpenBrowser(Option<alloc::string::String>),
 }
 
 pub trait Application: Send {

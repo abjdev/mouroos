@@ -1,5 +1,5 @@
 use super::apps::{
-    CalculatorApp, DoomApp, ElfRunnerApp, FileManagerApp, ImageViewerApp, MusicApp, NotepadApp,
+    BrowserApp, CalculatorApp, DoomApp, ElfRunnerApp, FileManagerApp, ImageViewerApp, MusicApp, NotepadApp,
     SettingsApp, SnakeApp, SysInfoApp, TerminalApp,
 };
 use super::color::Color;
@@ -34,7 +34,7 @@ pub struct Desktop {
     drag_offset_x: isize,
     drag_offset_y: isize,
     start_menu_open: bool,
-    icons: [DesktopIcon; 11],
+    icons: [DesktopIcon; 12],
     prev_left_pressed: bool,
     prev_right_pressed: bool,
     pub theme: Theme,
@@ -72,6 +72,7 @@ impl Desktop {
             DesktopIcon { name: "ELF Run",  x: 80, y: 220, app_id: 8 },
             DesktopIcon { name: "DOOM",     x: 80, y: 288, app_id: 9 },
             DesktopIcon { name: "Explorer", x: 16, y: 356, app_id: 10 },
+            DesktopIcon { name: "Browser",  x: 80, y: 356, app_id: 11 },
         ];
 
         let clock = rtc::read_time();
@@ -232,6 +233,19 @@ impl Desktop {
         self.windows.push(win);
     }
 
+    pub fn spawn_browser(&mut self, x: isize, y: isize, w: usize, h: usize, url: Option<&str>) {
+        let id = self.next_window_id;
+        self.next_window_id += 1;
+        let app = match url {
+            Some(u) => BrowserApp::with_url(u),
+            None => BrowserApp::new(),
+        };
+        let mut win = Window::new(id, x, y, w, h, Box::new(app));
+        win.is_focused = true;
+        self.unfocus_all();
+        self.windows.push(win);
+    }
+
     pub fn launch_app_by_id(&mut self, app_id: usize) {
         match app_id {
             0 => self.spawn_terminal(140, 80, 480, 270),
@@ -245,6 +259,7 @@ impl Desktop {
             8 => self.spawn_elf_runner(160, 80, 520, 360),
             9 => self.spawn_doom(78, 45, 644, 454),
             10 => self.spawn_file_manager(120, 70, 580, 380, "/home/user"),
+            11 => self.spawn_browser(90, 45, 620, 420, None),
             _ => {}
         }
     }
@@ -265,6 +280,9 @@ impl Desktop {
             }
             super::window::DesktopAction::OpenFileManager(path) => {
                 self.spawn_file_manager(120, 70, 580, 380, &path);
+            }
+            super::window::DesktopAction::OpenBrowser(url) => {
+                self.spawn_browser(90, 45, 620, 420, url.as_deref());
             }
         }
     }
@@ -456,7 +474,7 @@ impl Desktop {
         // 2. Check Start Menu Clicks if open
         if self.start_menu_open {
             let menu_w = 210;
-            let menu_h = 300;
+            let menu_h = 324;
             let menu_x = 2;
             let menu_y = taskbar_y - menu_h as isize;
 
@@ -465,8 +483,8 @@ impl Desktop {
                 if rel_y >= 0 {
                     let item_idx = (rel_y / 24) as usize;
                     match item_idx {
-                        0..=10 => self.launch_app_by_id(item_idx),
-                        11 => {
+                        0..=11 => self.launch_app_by_id(item_idx),
+                        12 => {
                             // Reboot
                             unsafe {
                                 let mut port = Port::new(0x64);
@@ -717,6 +735,7 @@ impl Desktop {
     }
 
     pub fn on_tick(&mut self) -> bool {
+        crate::net::poll();
         let mut changed = false;
 
         // Check if resolution change was requested
@@ -910,8 +929,35 @@ impl Desktop {
         // System Tray (Right side of taskbar)
         self.fb.draw_sunken_panel(tray_x, taskbar_y + 3, tray_w as usize, 22);
 
+        // Network status indicator in system tray (14x10 twin monitors)
+        let net_x = tray_x + 6;
+        let net_y = taskbar_y + 7;
+        let net_present = crate::drivers::rtl8139::is_present();
+        let net_info = crate::net::get_info();
+        let is_connected = net_present && net_info.as_ref().map(|(_, ip, ..)| !ip.is_unspecified()).unwrap_or(false);
+
+        // Back monitor
+        let m1_screen = if is_connected {
+            Color::from_rgb(34, 197, 94) // Green
+        } else {
+            Color::from_rgb(148, 163, 184) // Disconnected gray
+        };
+        self.fb.fill_rect(net_x + 4, net_y, 8, 6, Color::from_rgb(15, 23, 42));
+        self.fb.fill_rect(net_x + 5, net_y + 1, 6, 4, m1_screen);
+        self.fb.fill_rect(net_x + 7, net_y + 6, 2, 2, Color::from_rgb(71, 85, 105));
+
+        // Front monitor
+        let m2_screen = if is_connected {
+            Color::from_rgb(56, 189, 248) // Cyan
+        } else {
+            Color::from_rgb(100, 116, 139)
+        };
+        self.fb.fill_rect(net_x, net_y + 3, 8, 6, Color::from_rgb(15, 23, 42));
+        self.fb.fill_rect(net_x + 1, net_y + 4, 6, 4, m2_screen);
+        self.fb.fill_rect(net_x + 3, net_y + 9, 2, 2, Color::from_rgb(71, 85, 105));
+
         // Retro speaker icon in system tray (8x8)
-        let spk_x = tray_x + 6;
+        let spk_x = tray_x + 24;
         let spk_y = taskbar_y + 7;
         self.fb.fill_rect(spk_x, spk_y + 2, 2, 4, Color::BLACK);
         self.fb.draw_pixel(spk_x + 2, spk_y + 1, Color::BLACK);
@@ -928,12 +974,12 @@ impl Desktop {
         // System Tray Clock
         let clock = self.clock_cache;
         let clock_str = format!("{:02}:{:02}:{:02}", clock.hours, clock.minutes, clock.seconds);
-        self.fb.draw_string(tray_x + 22, taskbar_y + 6, &clock_str, Color::BLACK);
+        self.fb.draw_string(tray_x + 40, taskbar_y + 6, &clock_str, Color::BLACK);
 
         // 5. Render Start Menu Popup if open (Windows 98 Style)
         if self.start_menu_open {
             let menu_w = 210;
-            let menu_h = 300;
+            let menu_h = 324;
             let menu_x = 2;
             let menu_y = taskbar_y - menu_h as isize;
 
@@ -977,7 +1023,8 @@ impl Desktop {
                 (8, "ELF Runner"),
                 (9, "DOOM (1993)"),
                 (10, "Mouros Explorer"),
-                (11, "Shut Down..."),
+                (11, "Mouros Browser"),
+                (12, "Shut Down..."),
             ];
 
             for (i, (icon_id, name)) in items.iter().enumerate() {
