@@ -298,10 +298,21 @@ impl BrowserApp {
             }
         }
 
-        self.layout = layout_html(body, self.last_width.saturating_sub(40));
+        let is_chunked = headers.lines().any(|l| {
+            let lower = l.to_lowercase();
+            lower.starts_with("transfer-encoding:") && lower.contains("chunked")
+        });
+
+        let decoded_body = if is_chunked {
+            crate::net::socket::decode_chunked_body(body)
+        } else {
+            String::from(body)
+        };
+
+        self.layout = layout_html(&decoded_body, self.last_width.saturating_sub(40));
         self.page_title = format!("Mouros Browser - {}", self.layout.title);
         self.scroll_offset = 0;
-        self.status_text = format!("{} ({} bytes)", first_line, body.len());
+        self.status_text = format!("{} ({} bytes)", first_line, decoded_body.len());
     }
 
     pub fn go_back(&mut self) {

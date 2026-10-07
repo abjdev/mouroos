@@ -16,9 +16,7 @@ pub struct DnsResolver {
 impl DnsResolver {
     pub fn new() -> Self {
         let mut cache = BTreeMap::new();
-        // Pre-seed known common hosts so they resolve immediately
-        cache.insert(String::from("example.com"), Ipv4Addr::new(93, 184, 215, 14));
-        cache.insert(String::from("www.example.com"), Ipv4Addr::new(93, 184, 215, 14));
+        // Pre-seed localhost and router
         cache.insert(String::from("localhost"), Ipv4Addr::new(127, 0, 0, 1));
         cache.insert(String::from("router"), Ipv4Addr::new(10, 0, 2, 2));
         cache.insert(String::from("gateway"), Ipv4Addr::new(10, 0, 2, 2));

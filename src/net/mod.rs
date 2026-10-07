@@ -61,7 +61,7 @@ impl NetworkStack {
         let mut arp_table = ArpTable::new();
         // Pre-populate router and DNS server MACs for QEMU SLIRP (52:55:0A:00:02:02)
         arp_table.insert(Ipv4Addr::new(10, 0, 2, 2), MacAddress::new([0x52, 0x55, 0x0A, 0x00, 0x02, 0x02]));
-        arp_table.insert(Ipv4Addr::new(10, 0, 2, 3), MacAddress::new([0x52, 0x55, 0x0A, 0x00, 0x02, 0x02]));
+        arp_table.insert(Ipv4Addr::new(10, 0, 2, 3), MacAddress::new([0x52, 0x55, 0x0A, 0x00, 0x02, 0x03]));
 
         NetworkStack {
             mac,

@@ -1704,7 +1704,17 @@ impl TerminalApp {
                     out.push(String::new());
                 }
 
-                for bl in body.lines() {
+                let is_chunked = headers.lines().any(|l| {
+                    let lower = l.to_lowercase();
+                    lower.starts_with("transfer-encoding:") && lower.contains("chunked")
+                });
+                let final_body = if is_chunked {
+                    crate::net::socket::decode_chunked_body(body)
+                } else {
+                    String::from(body)
+                };
+
+                for bl in final_body.lines() {
                     out.push(String::from(bl));
                 }
             }

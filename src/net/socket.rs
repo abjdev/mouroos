@@ -1,3 +1,4 @@
+use alloc::string::String;
 use alloc::vec::Vec;
 use crate::net::ipv4::Ipv4Addr;
 use crate::net::tcp::{TcpConnection, TcpState, TCP_FLAG_ACK, TCP_FLAG_FIN, TCP_FLAG_PSH, TCP_FLAG_SYN};
@@ -189,4 +190,53 @@ impl Drop for TcpStream {
     fn drop(&mut self) {
         self.close();
     }
+}
+
+pub fn decode_chunked_body(raw: &str) -> String {
+    let mut out = String::new();
+    let mut rem = raw.trim_start();
+    while !rem.is_empty() {
+        let line_end = match rem.find("\r\n").or_else(|| rem.find('\n')) {
+            Some(i) => i,
+            None => break,
+        };
+        let line = rem[..line_end].trim();
+        let chunk_size = match usize::from_str_radix(line.split(';').next().unwrap_or(""), 16) {
+            Ok(sz) => sz,
+            Err(_) => {
+                if out.is_empty() {
+                    return String::from(raw);
+                } else {
+                    out.push_str(rem);
+                    return out;
+                }
+            }
+        };
+
+        if chunk_size == 0 {
+            break;
+        }
+
+        let data_start = if rem[line_end..].starts_with("\r\n") {
+            line_end + 2
+        } else {
+            line_end + 1
+        };
+
+        if data_start + chunk_size > rem.len() {
+            out.push_str(&rem[data_start..]);
+            break;
+        }
+
+        out.push_str(&rem[data_start..data_start + chunk_size]);
+
+        let next_start = data_start + chunk_size;
+        rem = &rem[next_start..];
+        if rem.starts_with("\r\n") {
+            rem = &rem[2..];
+        } else if rem.starts_with('\n') {
+            rem = &rem[1..];
+        }
+    }
+    out
 }
