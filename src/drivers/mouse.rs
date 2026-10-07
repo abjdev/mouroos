@@ -24,6 +24,7 @@ pub struct MouseEvent {
     pub dy: i32,
     pub left_pressed: bool,
     pub right_pressed: bool,
+    pub scroll_delta: i32,
 }
 
 static MOUSE_X: AtomicIsize = AtomicIsize::new(400);
@@ -34,15 +35,17 @@ static SCREEN_H: AtomicIsize = AtomicIsize::new(600);
 
 static MOUSE_EVENTS: OnceCell<ArrayQueue<MouseEvent>> = OnceCell::uninit();
 
-// Internal state for 3-byte packet assembly in interrupt handler
+// Internal state for 3/4-byte packet assembly in interrupt handler
 struct PacketParser {
     cycle: u8,
-    packet: [u8; 3],
+    packet: [u8; 4],
+    has_wheel: bool,
 }
 
 static PARSER: spin::Mutex<PacketParser> = spin::Mutex::new(PacketParser {
     cycle: 0,
-    packet: [0; 3],
+    packet: [0; 4],
+    has_wheel: false,
 });
 
 pub fn set_screen_bounds(width: isize, height: isize) {
@@ -148,6 +151,37 @@ pub fn init(screen_width: isize, screen_height: isize) {
         mouse_write(0xF6u8);
         let _ = mouse_read(); // ACK (0xFA)
 
+        // Try unlocking IntelliMouse mode (scroll wheel extension)
+        // Magic handshake sequence: sample rate 200 -> 100 -> 80
+        mouse_write(0xF3u8);
+        let _ = mouse_read();
+        mouse_write(200u8);
+        let _ = mouse_read();
+
+        mouse_write(0xF3u8);
+        let _ = mouse_read();
+        mouse_write(100u8);
+        let _ = mouse_read();
+
+        mouse_write(0xF3u8);
+        let _ = mouse_read();
+        mouse_write(80u8);
+        let _ = mouse_read();
+
+        // Query Device ID (0xF2)
+        mouse_write(0xF2u8);
+        let _ = mouse_read();
+        let device_id = mouse_read();
+
+        let has_wheel = device_id == 0x03 || device_id == 0x04;
+        if has_wheel {
+            crate::serial_println!("[MOUSE] IntelliMouse wheel extension active! Device ID: 0x{:02X}", device_id);
+        } else {
+            crate::serial_println!("[MOUSE] Standard PS/2 mouse active (no wheel). Device ID: 0x{:02X}", device_id);
+        }
+
+        PARSER.lock().has_wheel = has_wheel;
+
         // Enable data streaming
         mouse_write(0xF4u8);
         let _ = mouse_read(); // ACK (0xFA)
@@ -172,70 +206,84 @@ pub fn process_packet_byte(byte: u8) {
         }
         2 => {
             parser.packet[2] = byte;
+            if parser.has_wheel {
+                parser.cycle = 3;
+            } else {
+                parser.cycle = 0;
+                finish_packet(&parser.packet[..3], 0);
+            }
+        }
+        3 => {
+            parser.packet[3] = byte;
             parser.cycle = 0;
-
-            let flags = parser.packet[0];
-            let raw_x = parser.packet[1];
-            let raw_y = parser.packet[2];
-
-            let dx = if flags & 0x40 != 0 {
-                0
-            } else {
-                raw_x as i8 as i32
-            };
-
-            let dy = if flags & 0x80 != 0 {
-                0
-            } else {
-                raw_y as i8 as i32
-            };
-
-            // Invert dy for screen coordinates (PS/2 y is positive upwards)
-            let dy_screen = -dy;
-
-            let screen_w = SCREEN_W.load(Ordering::Relaxed);
-            let screen_h = SCREEN_H.load(Ordering::Relaxed);
-
-            let cur_x = MOUSE_X.load(Ordering::Relaxed);
-            let cur_y = MOUSE_Y.load(Ordering::Relaxed);
-
-            let new_x = (cur_x + dx as isize).clamp(0, screen_w - 1);
-            let new_y = (cur_y + dy_screen as isize).clamp(0, screen_h - 1);
-
-            let left_pressed = flags & 0x01 != 0;
-            let right_pressed = flags & 0x02 != 0;
-            let middle_pressed = flags & 0x04 != 0;
-
-            let mut btn = 0u8;
-            if left_pressed {
-                btn |= 0x01;
-            }
-            if right_pressed {
-                btn |= 0x02;
-            }
-            if middle_pressed {
-                btn |= 0x04;
-            }
-
-            MOUSE_X.store(new_x, Ordering::Relaxed);
-            MOUSE_Y.store(new_y, Ordering::Relaxed);
-            MOUSE_BUTTONS.store(btn, Ordering::Relaxed);
-
-            let event = MouseEvent {
-                x: new_x,
-                y: new_y,
-                dx,
-                dy: dy_screen,
-                left_pressed,
-                right_pressed,
-            };
-
-            if let Ok(queue) = MOUSE_EVENTS.try_get() {
-                let _ = queue.push(event);
-            }
+            let raw_z = parser.packet[3] as i8 as i32;
+            finish_packet(&parser.packet[..4], raw_z);
         }
         _ => {
             parser.cycle = 0;
         }
+    }
+}
+
+fn finish_packet(packet: &[u8], scroll_delta: i32) {
+    let flags = packet[0];
+    let raw_x = packet[1];
+    let raw_y = packet[2];
+
+    let dx = if flags & 0x40 != 0 {
+        0
+    } else {
+        raw_x as i8 as i32
+    };
+
+    let dy = if flags & 0x80 != 0 {
+        0
+    } else {
+        raw_y as i8 as i32
+    };
+
+    // Invert dy for screen coordinates (PS/2 y is positive upwards)
+    let dy_screen = -dy;
+
+    let screen_w = SCREEN_W.load(Ordering::Relaxed);
+    let screen_h = SCREEN_H.load(Ordering::Relaxed);
+
+    let cur_x = MOUSE_X.load(Ordering::Relaxed);
+    let cur_y = MOUSE_Y.load(Ordering::Relaxed);
+
+    let new_x = (cur_x + dx as isize).clamp(0, screen_w - 1);
+    let new_y = (cur_y + dy_screen as isize).clamp(0, screen_h - 1);
+
+    let left_pressed = flags & 0x01 != 0;
+    let right_pressed = flags & 0x02 != 0;
+    let middle_pressed = flags & 0x04 != 0;
+
+    let mut btn = 0u8;
+    if left_pressed {
+        btn |= 0x01;
+    }
+    if right_pressed {
+        btn |= 0x02;
+    }
+    if middle_pressed {
+        btn |= 0x04;
+    }
+
+    MOUSE_X.store(new_x, Ordering::Relaxed);
+    MOUSE_Y.store(new_y, Ordering::Relaxed);
+    MOUSE_BUTTONS.store(btn, Ordering::Relaxed);
+
+    let event = MouseEvent {
+        x: new_x,
+        y: new_y,
+        dx,
+        dy: dy_screen,
+        left_pressed,
+        right_pressed,
+        scroll_delta,
+    };
+
+    if let Ok(queue) = MOUSE_EVENTS.try_get() {
+        let _ = queue.push(event);
     }
 }

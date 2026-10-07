@@ -670,6 +670,17 @@ impl Application for FileManagerApp {
         }
     }
 
+    fn on_mouse_scroll(&mut self, _local_x: isize, _local_y: isize, delta: i32) -> bool {
+        let max_rows = self.last_h.saturating_sub(96) / 20;
+        let max_scroll = self.entries.len().saturating_sub(max_rows.max(1));
+        if delta > 0 {
+            self.scroll_offset = self.scroll_offset.saturating_sub(3);
+        } else if delta < 0 {
+            self.scroll_offset = (self.scroll_offset + 3).min(max_scroll);
+        }
+        true
+    }
+
     fn render(
         &mut self,
         fb: &mut Framebuffer,

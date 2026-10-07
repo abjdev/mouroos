@@ -17,6 +17,7 @@ pub struct NotepadApp {
     pub modified: bool,
     pub status_msg: Option<(String, usize)>,
     pub ctrl_pressed: bool,
+    pub scroll_row: usize,
 }
 
 impl NotepadApp {
@@ -58,6 +59,7 @@ impl NotepadApp {
             modified: false,
             status_msg: None,
             ctrl_pressed: false,
+            scroll_row: 0,
         }
     }
 
@@ -107,8 +109,11 @@ impl Application for NotepadApp {
         let padding_y = 4;
         let mut y = client_y + padding_y;
         let max_chars = client_w.saturating_sub(12) / FONT_WIDTH;
+        let max_visible = text_h / (FONT_HEIGHT + 2);
+        let max_scroll = self.lines.len().saturating_sub(max_visible.max(1));
+        let eff_scroll = self.scroll_row.min(max_scroll);
 
-        for (idx, line) in self.lines.iter().enumerate() {
+        for (idx, line) in self.lines.iter().enumerate().skip(eff_scroll) {
             if y + line_height > client_y + text_h as isize {
                 break;
             }
@@ -344,6 +349,16 @@ impl Application for NotepadApp {
     }
 
     fn on_mouse_click(&mut self, _local_x: isize, _local_y: isize, _left: bool) {}
+
+    fn on_mouse_scroll(&mut self, _local_x: isize, _local_y: isize, delta: i32) -> bool {
+        if delta > 0 {
+            self.scroll_row = self.scroll_row.saturating_sub(3);
+        } else if delta < 0 {
+            let max_scroll = self.lines.len().saturating_sub(1);
+            self.scroll_row = (self.scroll_row + 3).min(max_scroll);
+        }
+        true
+    }
 
     fn on_tick(&mut self) -> bool {
         if let Some((_, ref mut count)) = self.status_msg {

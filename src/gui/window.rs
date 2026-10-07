@@ -32,6 +32,9 @@ pub trait Application: Send {
     fn on_raw_key(&mut self, _event: pc_keyboard::KeyEvent) {}
     fn on_blur(&mut self) {}
     fn on_mouse_click(&mut self, local_x: isize, local_y: isize, left: bool);
+    fn on_mouse_scroll(&mut self, _local_x: isize, _local_y: isize, _delta: i32) -> bool {
+        false
+    }
     fn on_tick(&mut self) -> bool {
         false
     }

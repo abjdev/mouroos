@@ -519,6 +519,15 @@ impl Application for MusicApp {
         }
     }
 
+    fn on_mouse_scroll(&mut self, _local_x: isize, _local_y: isize, delta: i32) -> bool {
+        if delta > 0 {
+            self.scroll_left();
+        } else if delta < 0 {
+            self.scroll_right(350);
+        }
+        true
+    }
+
     fn render(
         &mut self,
         fb: &mut Framebuffer,

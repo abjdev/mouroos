@@ -432,6 +432,23 @@ impl Desktop {
             return was_dragging;
         }
 
+        // Scroll Wheel Event Handling
+        if ev.scroll_delta != 0 {
+            let num_windows = self.windows.len();
+            for i in (0..num_windows).rev() {
+                if !self.windows[i].is_minimized && self.windows[i].contains(ev.x, ev.y) {
+                    let (cx, cy, _, _) = self.windows[i].client_bounds();
+                    let local_x = ev.x - cx;
+                    let local_y = ev.y - cy;
+                    if self.windows[i].app.on_mouse_scroll(local_x, local_y, ev.scroll_delta) {
+                        return true;
+                    }
+                    return false;
+                }
+            }
+            return false;
+        }
+
         if !left_just_pressed && !right_just_pressed {
             return false;
         }
@@ -630,6 +647,12 @@ impl Desktop {
     pub fn handle_key_event(&mut self, key: DecodedKey) {
         if self.alt_pressed {
             match key {
+                DecodedKey::RawKey(KeyCode::F4) => {
+                    if !self.windows.is_empty() {
+                        self.windows.pop();
+                        return;
+                    }
+                }
                 DecodedKey::RawKey(KeyCode::Tab) | DecodedKey::Unicode('\t') => {
                     if !self.windows.is_empty() {
                         if !self.alt_tab_active {

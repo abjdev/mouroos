@@ -575,6 +575,17 @@ impl Application for BrowserApp {
         }
     }
 
+    fn on_mouse_scroll(&mut self, _local_x: isize, _local_y: isize, delta: i32) -> bool {
+        let step = 40 * delta.abs() as usize;
+        let max_scroll = self.layout.total_height.saturating_sub(60);
+        if delta > 0 {
+            self.scroll_offset = self.scroll_offset.saturating_sub(step);
+        } else if delta < 0 {
+            self.scroll_offset = (self.scroll_offset + step).min(max_scroll);
+        }
+        true
+    }
+
     fn render(
         &mut self,
         fb: &mut Framebuffer,

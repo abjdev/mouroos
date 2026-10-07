@@ -78,6 +78,7 @@ pub struct TerminalApp {
     shift_pressed: bool,
     ctrl_pressed: bool,
     pending_action: Option<crate::gui::window::DesktopAction>,
+    pub scroll_offset: usize,
 }
 
 impl TerminalApp {
@@ -94,6 +95,7 @@ impl TerminalApp {
             shift_pressed: false,
             ctrl_pressed: false,
             pending_action: None,
+            scroll_offset: 0,
             env_vars: alloc::vec![
                 (String::from("USER"), String::from("user")),
                 (String::from("HOME"), String::from("/home/user")),
@@ -1780,12 +1782,15 @@ impl Application for TerminalApp {
 
         // Reserve 1 line for current prompt input
         let content_lines = max_visible_lines.saturating_sub(1);
-        let start_idx = self.lines.len().saturating_sub(content_lines);
+        let max_scroll = self.lines.len().saturating_sub(content_lines);
+        let eff_scroll = self.scroll_offset.min(max_scroll);
+        let start_idx = self.lines.len().saturating_sub(content_lines + eff_scroll);
+        let end_idx = (start_idx + content_lines).min(self.lines.len());
 
         let mut current_y = client_y + padding;
         let max_chars = (client_w.saturating_sub(padding as usize * 2)) / FONT_WIDTH;
 
-        for line in &self.lines[start_idx..] {
+        for line in &self.lines[start_idx..end_idx] {
             let color = if line.starts_with("mouros:") || line.starts_with("mouros>") {
                 Color::from_rgb(56, 189, 248) // light sky blue
             } else if line.starts_with("Error") || line.starts_with("Unknown") {
@@ -1803,6 +1808,12 @@ impl Application for TerminalApp {
             };
             fb.draw_string(client_x + padding, current_y, display_str, color);
             current_y += line_height;
+        }
+
+        if eff_scroll > 0 {
+            let ind = format!("[History: -{} lines]", eff_scroll);
+            let ind_x = (client_x + client_w as isize - 8) - (ind.len() * FONT_WIDTH) as isize;
+            fb.draw_string(ind_x, client_y + padding, &ind, Color::from_rgb(250, 204, 21));
         }
 
         // Draw current prompt
@@ -1849,6 +1860,7 @@ impl Application for TerminalApp {
     }
 
     fn on_key(&mut self, key: DecodedKey) {
+        self.scroll_offset = 0;
         match key {
             DecodedKey::Unicode(c) => {
                 if self.ctrl_pressed {
@@ -1949,6 +1961,18 @@ impl Application for TerminalApp {
     }
 
     fn on_mouse_click(&mut self, _local_x: isize, _local_y: isize, _left: bool) {}
+
+    fn on_mouse_scroll(&mut self, _local_x: isize, _local_y: isize, delta: i32) -> bool {
+        let step = 3;
+        if delta > 0 {
+            // Scroll back up into history
+            self.scroll_offset = self.scroll_offset.saturating_add(step);
+        } else if delta < 0 {
+            // Scroll down towards prompt
+            self.scroll_offset = self.scroll_offset.saturating_sub(step);
+        }
+        true
+    }
 
     fn on_tick(&mut self) -> bool {
         self.blink_counter += 1;
