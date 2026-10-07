@@ -7,6 +7,7 @@ pub mod ipv4;
 pub mod socket;
 pub mod tcp;
 pub mod udp;
+pub mod tls;
 
 use alloc::collections::BTreeMap;
 use alloc::string::String;
@@ -87,6 +88,7 @@ impl NetworkStack {
     }
 
     pub fn allocate_ephemeral_port(&mut self) -> u16 {
+        self.tcp_conns.retain(|_, conn| conn.state != tcp::TcpState::Closed);
         let p = self.next_port;
         self.next_port = if self.next_port >= 65530 { 49152 } else { self.next_port + 1 };
         p
@@ -290,8 +292,19 @@ impl NetworkStack {
                 }
                 TcpState::Established => {
                     if !payload.is_empty() {
-                        conn.rx_buf.extend_from_slice(payload);
-                        conn.remote_seq = hdr.seq_num.wrapping_add(payload.len() as u32);
+                        if hdr.seq_num == conn.remote_seq {
+                            conn.rx_buf.extend_from_slice(payload);
+                            conn.remote_seq = conn.remote_seq.wrapping_add(payload.len() as u32);
+                        } else if hdr.seq_num < conn.remote_seq {
+                            let end_seq = hdr.seq_num.wrapping_add(payload.len() as u32);
+                            if end_seq > conn.remote_seq {
+                                let offset = conn.remote_seq.wrapping_sub(hdr.seq_num) as usize;
+                                if offset < payload.len() {
+                                    conn.rx_buf.extend_from_slice(&payload[offset..]);
+                                    conn.remote_seq = end_seq;
+                                }
+                            }
+                        }
                         send_ack = true;
                         ack_num = conn.remote_seq;
                         local_seq = conn.local_seq;

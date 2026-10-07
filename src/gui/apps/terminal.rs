@@ -481,7 +481,7 @@ impl TerminalApp {
                 out.push(String::from("  ifconfig  - View or configure network interfaces"));
                 out.push(String::from("  ping <ip> - Send ICMP Echo requests to host"));
                 out.push(String::from("  dns <dom> - Query domain name from DNS"));
-                out.push(String::from("  curl <url>- Transfer data from HTTP server"));
+                out.push(String::from("  curl <url>- Transfer data from HTTP/HTTPS server"));
                 out.push(String::from("  beep      - Test PC speaker sound"));
                 out.push(String::from("  reboot    - Reboot the computer"));
                 out.push(String::from("  shutdown  - Power off system"));
@@ -1615,23 +1615,26 @@ impl TerminalApp {
                     return;
                 }
 
-                if url.starts_with("https://") {
-                    out.push(String::from("curl: (1) Protocol 'https' not supported (Mouros OS does not have TLS). Please use http://"));
-                    return;
-                }
-
-                let trimmed = if url.starts_with("http://") { &url[7..] } else { url };
+                let is_https = url.starts_with("https://");
+                let trimmed = if is_https {
+                    &url[8..]
+                } else if url.starts_with("http://") {
+                    &url[7..]
+                } else {
+                    url
+                };
                 let (host_port, path) = match trimmed.find('/') {
                     Some(idx) => (&trimmed[..idx], &trimmed[idx..]),
                     None => (trimmed, "/"),
                 };
+                let default_port = if is_https { 443 } else { 80 };
                 let (host, port) = match host_port.find(':') {
                     Some(idx) => {
                         let h = &host_port[..idx];
-                        let p = host_port[idx + 1..].parse::<u16>().unwrap_or(80);
+                        let p = host_port[idx + 1..].parse::<u16>().unwrap_or(default_port);
                         (h, p)
                     }
-                    None => (host_port, 80),
+                    None => (host_port, default_port),
                 };
 
                 let ip = match crate::net::resolve_hostname(host) {
@@ -1646,38 +1649,68 @@ impl TerminalApp {
                     out.push(format!("* Connecting to {} ({}) port {}", host, ip, port));
                 }
 
-                let mut stream = match crate::net::socket::TcpStream::connect(ip, port) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        out.push(format!("curl: (7) Failed to connect to {} port {}: {}", host, port, e));
-                        return;
-                    }
-                };
-
-                if verbose {
-                    out.push(String::from("* Connected successfully"));
-                    out.push(format!("> GET {} HTTP/1.1", path));
-                    out.push(format!("> Host: {}", host));
-                    out.push(String::from("> User-Agent: curl/7.88.1 (Mouros OS)"));
-                    out.push(String::from("> Accept: */*"));
-                    out.push(String::new());
-                }
-
                 let req = format!(
                     "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: curl/7.88.1 (Mouros OS)\r\nAccept: */*\r\nConnection: close\r\n\r\n",
                     path, host
                 );
 
-                if let Err(e) = stream.write(req.as_bytes()) {
-                    out.push(format!("curl: (55) Send failure: {}", e));
-                    return;
-                }
-
-                let resp_bytes = match stream.read_to_end(65536) {
-                    Ok(b) => b,
-                    Err(e) => {
-                        out.push(format!("curl: (56) Recv failure: {}", e));
+                let resp_bytes = if is_https {
+                    if verbose {
+                        out.push(format!("* Initiating TLS 1.3 handshake with {}...", host));
+                    }
+                    let mut stream = match crate::net::tls::TlsStream::connect(ip, port, host) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            out.push(format!("curl: (35) TLS handshake failed: {}", e));
+                            return;
+                        }
+                    };
+                    if verbose {
+                        out.push(String::from("* TLS 1.3 connection established"));
+                        out.push(String::from("* Cipher: TLS_CHACHA20_POLY1305_SHA256 (RFC 8446)"));
+                        out.push(format!("> GET {} HTTP/1.1", path));
+                        out.push(format!("> Host: {}", host));
+                        out.push(String::from("> User-Agent: curl/7.88.1 (Mouros OS)"));
+                        out.push(String::from("> Accept: */*"));
+                        out.push(String::new());
+                    }
+                    if let Err(e) = stream.write(req.as_bytes()) {
+                        out.push(format!("curl: (55) Send failure: {}", e));
                         return;
+                    }
+                    match stream.read_to_end(65536) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            out.push(format!("curl: (56) Recv failure: {}", e));
+                            return;
+                        }
+                    }
+                } else {
+                    let mut stream = match crate::net::socket::TcpStream::connect(ip, port) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            out.push(format!("curl: (7) Failed to connect to {} port {}: {}", host, port, e));
+                            return;
+                        }
+                    };
+                    if verbose {
+                        out.push(String::from("* Connected successfully"));
+                        out.push(format!("> GET {} HTTP/1.1", path));
+                        out.push(format!("> Host: {}", host));
+                        out.push(String::from("> User-Agent: curl/7.88.1 (Mouros OS)"));
+                        out.push(String::from("> Accept: */*"));
+                        out.push(String::new());
+                    }
+                    if let Err(e) = stream.write(req.as_bytes()) {
+                        out.push(format!("curl: (55) Send failure: {}", e));
+                        return;
+                    }
+                    match stream.read_to_end(65536) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            out.push(format!("curl: (56) Recv failure: {}", e));
+                            return;
+                        }
                     }
                 };
 

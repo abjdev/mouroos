@@ -225,10 +225,11 @@ pub fn init<A: FrameAllocator<Size4KiB>>(phys_mem_offset: VirtAddr, frame_alloca
         Port::<u16>::new(io_base + REG_IMR).write(INT_ROK | INT_TOK | INT_RER | INT_TER);
     }
 
-    // 7. Receive Configuration (RCR): Accept Broadcast, Multicast, Physical match, wrap = 0
+    // 7. Receive Configuration (RCR): Accept Broadcast, Multicast, Physical match, wrap = 1 (bit 7: 0x80)
     unsafe {
-        // AAP (0x01) | APM (0x02) | AM (0x04) | AB (0x08) = 0x0F
-        Port::<u32>::new(io_base + REG_RCR).write(0x0000_000F);
+        // AAP (0x01) | APM (0x02) | AM (0x04) | AB (0x08) | WRAP (0x80) = 0x8F
+        Port::<u32>::new(io_base + REG_RCR).write(0x0000_008F);
+        Port::<u16>::new(io_base + REG_CAPR).write(0x1FF0);
     }
 
     // 8. Enable Transmitter and Receiver

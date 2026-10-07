@@ -9,6 +9,7 @@ use crate::gui::font::{FONT_HEIGHT, FONT_WIDTH};
 use crate::gui::framebuffer::Framebuffer;
 use crate::gui::window::Application;
 use crate::net::socket::TcpStream;
+use crate::net::tls::TlsStream;
 
 pub struct BrowserApp {
     pub url_input: String,
@@ -80,17 +81,19 @@ impl BrowserApp {
             "<hr>",
             "<h2>Quick Navigation Links</h2>",
             "<ul>",
-            "  <li><a href=\"http://10.0.2.2:8000/\">Local QEMU Host Server (http://10.0.2.2:8000/)</a></li>",
+            "  <li><a href=\"https://abjdev.github.io/hw.html\">Live HTTPS Test (https://abjdev.github.io/hw.html)</a></li>",
             "  <li><a href=\"http://example.com/\">Example Domain (http://example.com/)</a></li>",
+            "  <li><a href=\"http://10.0.2.2:8000/\">Local QEMU Host Server (http://10.0.2.2:8000/)</a></li>",
             "</ul>",
             "<h2>Built-in Capabilities</h2>",
             "<ul>",
             "  <li>Real RTL8139 PCI hardware controller with DMA ring buffers</li>",
             "  <li>Full TCP/IP networking stack: Ethernet, ARP, IPv4, ICMP, UDP, TCP</li>",
             "  <li>Automatic DHCP configuration and DNS resolution</li>",
+            "  <li>Native TLS 1.3 Client: X25519 ECDHE, ChaCha20-Poly1305 AEAD, HKDF-SHA256</li>",
+            "  <li>Full HTTPS and HTTP support with seamless redirect following</li>",
             "  <li>Clickable links, backward/forward history, and smooth vertical scrolling</li>",
             "</ul>",
-            "<p><em>Note: HTTPS is not supported yet (Mouros OS does not have TLS). Please use HTTP.</em></p>",
             "</body></html>"
         );
         let layout = layout_html(welcome_html, self.last_width.saturating_sub(40));
@@ -106,29 +109,6 @@ impl BrowserApp {
             return;
         }
 
-        // Check for HTTPS warning
-        if trimmed.starts_with("https://") {
-            self.warning_banner = Some(String::from(
-                "Notice: HTTPS is not supported yet (Mouros OS does not have TLS). Please use http://",
-            ));
-            self.status_text = String::from("Error: HTTPS unsupported");
-            let err_html = format!(
-                "<html><head><title>HTTPS Not Supported</title></head><body>\
-                <h1>Cannot Connect via HTTPS</h1>\
-                <p>You attempted to open: <strong>{}</strong></p>\
-                <p>Mouros OS currently does not contain a TLS/SSL engine.</p>\
-                <hr>\
-                <p>Please enter an <strong>http://</strong> address instead.</p>\
-                </body></html>",
-                trimmed
-            );
-            self.layout = layout_html(&err_html, self.last_width.saturating_sub(40));
-            self.page_title = String::from("Mouros Browser - HTTPS Not Supported");
-            self.url_input = String::from(trimmed);
-            self.current_url = String::from(trimmed);
-            return;
-        }
-
         self.warning_banner = None;
 
         if trimmed == "about:home" || trimmed == "about:blank" {
@@ -138,11 +118,13 @@ impl BrowserApp {
             return;
         }
 
-        let full_url = if !trimmed.starts_with("http://") {
+        let full_url = if !trimmed.starts_with("http://") && !trimmed.starts_with("https://") {
             format!("http://{}", trimmed)
         } else {
             String::from(trimmed)
         };
+
+        let is_https = full_url.starts_with("https://");
 
         if add_to_history && !self.current_url.is_empty() && self.current_url != full_url {
             self.history_back.push(self.current_url.clone());
@@ -153,19 +135,25 @@ impl BrowserApp {
         self.current_url = full_url.clone();
         self.status_text = format!("Connecting to {}...", self.current_url);
 
-        let without_proto = &self.current_url[7..]; // strip http://
+        let without_proto = if is_https {
+            &self.current_url[8..] // strip https://
+        } else {
+            &self.current_url[7..] // strip http://
+        };
+
         let (host_port, path) = match without_proto.find('/') {
             Some(idx) => (&without_proto[..idx], &without_proto[idx..]),
             None => (without_proto, "/"),
         };
 
+        let default_port = if is_https { 443 } else { 80 };
         let (host, port) = match host_port.find(':') {
             Some(idx) => {
                 let h = &host_port[..idx];
-                let p = host_port[idx + 1..].parse::<u16>().unwrap_or(80);
+                let p = host_port[idx + 1..].parse::<u16>().unwrap_or(default_port);
                 (h, p)
             }
-            None => (host_port, 80),
+            None => (host_port, default_port),
         };
 
         self.status_text = format!("Resolving host {}...", host);
@@ -188,60 +176,112 @@ impl BrowserApp {
             }
         };
 
-        self.status_text = format!("Connecting to {}:{}...", ip, port);
-
-        let mut stream = match TcpStream::connect(ip, port) {
-            Ok(s) => s,
-            Err(e) => {
-                self.status_text = format!("Error: {}", e);
-                let err_html = format!(
-                    "<html><head><title>Connection Error</title></head><body>\
-                    <h1>Failed to Connect</h1>\
-                    <p>Could not establish TCP connection to <strong>{}:{}</strong>: {}</p>\
-                    </body></html>",
-                    ip, port, e
-                );
-                self.layout = layout_html(&err_html, self.last_width.saturating_sub(40));
-                self.page_title = String::from("Mouros Browser - Connection Error");
-                return;
-            }
-        };
-
         let request = format!(
             "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: MourosBrowser/1.0\r\nAccept: text/html,*/*\r\nConnection: close\r\n\r\n",
             path, host
         );
 
-        self.status_text = String::from("Sending HTTP GET request...");
-        if let Err(e) = stream.write(request.as_bytes()) {
-            self.status_text = format!("Send error: {}", e);
-            let err_html = format!(
-                "<html><head><title>Network Send Error</title></head><body>\
-                <h1>Failed to Send Request</h1>\
-                <p>Could not send HTTP request to <strong>{}:{}</strong>: {}</p>\
-                </body></html>",
-                ip, port, e
-            );
-            self.layout = layout_html(&err_html, self.last_width.saturating_sub(40));
-            self.page_title = String::from("Mouros Browser - Send Error");
-            return;
-        }
+        let response_bytes = if is_https {
+            self.status_text = format!("Connecting TLS 1.3 to {}:{}...", host, port);
+            let mut stream = match TlsStream::connect(ip, port, host) {
+                Ok(s) => s,
+                Err(e) => {
+                    self.status_text = format!("TLS Error: {}", e);
+                    let err_html = format!(
+                        "<html><head><title>TLS Error</title></head><body>\
+                        <h1>TLS 1.3 Handshake Failed</h1>\
+                        <p>Could not establish encrypted connection to <strong>{}:{}</strong>: {}</p>\
+                        </body></html>",
+                        host, port, e
+                    );
+                    self.layout = layout_html(&err_html, self.last_width.saturating_sub(40));
+                    self.page_title = String::from("Mouros Browser - TLS Error");
+                    return;
+                }
+            };
 
-        self.status_text = String::from("Reading HTTP response...");
-        let response_bytes = match stream.read_to_end(65536) {
-            Ok(b) => b,
-            Err(e) => {
-                self.status_text = format!("Read error: {}", e);
+            self.status_text = String::from("Sending encrypted HTTP GET request...");
+            if let Err(e) = stream.write(request.as_bytes()) {
+                self.status_text = format!("Send error: {}", e);
                 let err_html = format!(
-                    "<html><head><title>Network Read Error</title></head><body>\
-                    <h1>Failed to Read Response</h1>\
-                    <p>Error while reading response from <strong>{}:{}</strong>: {}</p>\
+                    "<html><head><title>Network Send Error</title></head><body>\
+                    <h1>Failed to Send Request</h1>\
+                    <p>Could not send encrypted HTTP request to <strong>{}:{}</strong>: {}</p>\
+                    </body></html>",
+                    host, port, e
+                );
+                self.layout = layout_html(&err_html, self.last_width.saturating_sub(40));
+                self.page_title = String::from("Mouros Browser - Send Error");
+                return;
+            }
+
+            self.status_text = String::from("Reading encrypted response...");
+            match stream.read_to_end(65536) {
+                Ok(b) => b,
+                Err(e) => {
+                    self.status_text = format!("Read error: {}", e);
+                    let err_html = format!(
+                        "<html><head><title>Network Read Error</title></head><body>\
+                        <h1>Failed to Read Response</h1>\
+                        <p>Error while reading response from <strong>{}:{}</strong>: {}</p>\
+                        </body></html>",
+                        host, port, e
+                    );
+                    self.layout = layout_html(&err_html, self.last_width.saturating_sub(40));
+                    self.page_title = String::from("Mouros Browser - Read Error");
+                    return;
+                }
+            }
+        } else {
+            self.status_text = format!("Connecting to {}:{}...", ip, port);
+            let mut stream = match TcpStream::connect(ip, port) {
+                Ok(s) => s,
+                Err(e) => {
+                    self.status_text = format!("Error: {}", e);
+                    let err_html = format!(
+                        "<html><head><title>Connection Error</title></head><body>\
+                        <h1>Failed to Connect</h1>\
+                        <p>Could not establish TCP connection to <strong>{}:{}</strong>: {}</p>\
+                        </body></html>",
+                        ip, port, e
+                    );
+                    self.layout = layout_html(&err_html, self.last_width.saturating_sub(40));
+                    self.page_title = String::from("Mouros Browser - Connection Error");
+                    return;
+                }
+            };
+
+            self.status_text = String::from("Sending HTTP GET request...");
+            if let Err(e) = stream.write(request.as_bytes()) {
+                self.status_text = format!("Send error: {}", e);
+                let err_html = format!(
+                    "<html><head><title>Network Send Error</title></head><body>\
+                    <h1>Failed to Send Request</h1>\
+                    <p>Could not send HTTP request to <strong>{}:{}</strong>: {}</p>\
                     </body></html>",
                     ip, port, e
                 );
                 self.layout = layout_html(&err_html, self.last_width.saturating_sub(40));
-                self.page_title = String::from("Mouros Browser - Read Error");
+                self.page_title = String::from("Mouros Browser - Send Error");
                 return;
+            }
+
+            self.status_text = String::from("Reading HTTP response...");
+            match stream.read_to_end(65536) {
+                Ok(b) => b,
+                Err(e) => {
+                    self.status_text = format!("Read error: {}", e);
+                    let err_html = format!(
+                        "<html><head><title>Network Read Error</title></head><body>\
+                        <h1>Failed to Read Response</h1>\
+                        <p>Error while reading response from <strong>{}:{}</strong>: {}</p>\
+                        </body></html>",
+                        ip, port, e
+                    );
+                    self.layout = layout_html(&err_html, self.last_width.saturating_sub(40));
+                    self.page_title = String::from("Mouros Browser - Read Error");
+                    return;
+                }
             }
         };
 
@@ -251,8 +291,6 @@ impl BrowserApp {
                 "<html><head><title>Empty Response</title></head><body>\
                 <h1>Empty Response From Server</h1>\
                 <p>The host at <strong>{}</strong> ({}:{}) connected successfully but closed the connection without returning any response data.</p>\
-                <hr>\
-                <p>If testing local HTTP, make sure a web server is running on <code>10.0.2.2:8000</code>.</p>\
                 </body></html>",
                 host, ip, port
             );
@@ -294,46 +332,22 @@ impl BrowserApp {
                     let target_url = if new_loc.starts_with("http://") || new_loc.starts_with("https://") {
                         String::from(new_loc)
                     } else if new_loc.starts_with("//") {
-                        format!("http:{}", new_loc)
+                        if is_https {
+                            format!("https:{}", new_loc)
+                        } else {
+                            format!("http:{}", new_loc)
+                        }
                     } else if new_loc.starts_with('/') {
-                        format!("http://{}{}", host, new_loc)
+                        let proto = if is_https { "https" } else { "http" };
+                        format!("{}://{}{}", proto, host, new_loc)
                     } else {
-                        format!("http://{}/{}", host, new_loc)
+                        let proto = if is_https { "https" } else { "http" };
+                        format!("{}://{}/{}", proto, host, new_loc)
                     };
 
-                    if target_url.starts_with("https://") {
-                        self.warning_banner = Some(format!(
-                            "Notice: Server redirected to HTTPS ({}). Mouros OS does not have TLS.",
-                            target_url
-                        ));
-                        self.status_text = format!("HTTP {} Redirect to HTTPS (unsupported)", status_code);
-                        let err_html = format!(
-                            "<html><head><title>HTTPS Redirection</title></head><body>\
-                            <h1>HTTPS Redirection Not Supported</h1>\
-                            <p>The server at <strong>{}</strong> responded with <strong>HTTP {} Redirect</strong> to an encrypted HTTPS URL:</p>\
-                            <p><strong>{}</strong></p>\
-                            <hr>\
-                            <h3>Why did this happen?</h3>\
-                            <p>Sites hosted on <strong>GitHub Pages (*.github.io)</strong> and modern CDNs enforce HTTPS (HSTS) and automatically redirect all incoming HTTP requests to HTTPS.</p>\
-                            <p>Mouros OS runs bare-metal without a TLS/SSL engine, so encrypted connections cannot be negotiated.</p>\
-                            <h3>How to test your HTML on Mouros OS:</h3>\
-                            <ul>\
-                              <li>Host your HTML file locally over plain HTTP on your computer: run <code>python3 -m http.server 8000</code> in your folder, then open <code>http://10.0.2.2:8000/hw.html</code>.</li>\
-                              <li>Or test with live HTTP domains that support plain HTTP without HTTPS enforcement (such as <code>http://example.com</code>).</li>\
-                            </ul>\
-                            </body></html>",
-                            host, status_code, target_url
-                        );
-                        self.layout = layout_html(&err_html, self.last_width.saturating_sub(40));
-                        self.page_title = String::from("Mouros Browser - HTTPS Redirect");
-                        self.url_input = full_url.clone();
-                        self.current_url = full_url.clone();
-                        return;
-                    } else {
-                        self.status_text = format!("Redirecting to {}...", target_url);
-                        self.navigate_to(&target_url, add_to_history);
-                        return;
-                    }
+                    self.status_text = format!("Redirecting to {}...", target_url);
+                    self.navigate_to(&target_url, add_to_history);
+                    return;
                 }
             }
         }
@@ -352,7 +366,8 @@ impl BrowserApp {
         self.layout = layout_html(&decoded_body, self.last_width.saturating_sub(40));
         self.page_title = format!("Mouros Browser - {}", self.layout.title);
         self.scroll_offset = 0;
-        self.status_text = format!("{} ({} bytes)", first_line, decoded_body.len());
+        let proto_tag = if is_https { "HTTPS TLS 1.3" } else { "HTTP" };
+        self.status_text = format!("Done ({}, {}, {} bytes)", proto_tag, first_line, decoded_body.len());
     }
 
     pub fn go_back(&mut self) {
