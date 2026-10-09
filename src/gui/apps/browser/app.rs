@@ -3,7 +3,10 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use pc_keyboard::{DecodedKey, KeyCode};
 
-use crate::gui::apps::browser::html::{layout_html, DocumentLayout, LayoutItem};
+use crate::gui::apps::browser::css::{compute_styles, CssRule};
+use crate::gui::apps::browser::dom::DomTree;
+use crate::gui::apps::browser::html::{compute_layout, layout_html, parse_html, ClickableAction, DocumentLayout, LayoutItem};
+use crate::gui::apps::browser::js::JsContext;
 use crate::gui::color::Color;
 use crate::gui::font::{FONT_HEIGHT, FONT_WIDTH};
 use crate::gui::framebuffer::Framebuffer;
@@ -16,6 +19,10 @@ pub struct BrowserApp {
     pub current_url: String,
     pub history_back: Vec<String>,
     pub history_forward: Vec<String>,
+    pub dom_tree: DomTree,
+    pub stylesheets: Vec<CssRule>,
+    pub js_context: JsContext,
+    pub alert_dialog: Option<String>,
     pub layout: DocumentLayout,
     pub scroll_offset: usize,
     pub address_bar_focused: bool,
@@ -45,10 +52,15 @@ impl BrowserApp {
             current_url: String::from(initial_url),
             history_back: Vec::new(),
             history_forward: Vec::new(),
+            dom_tree: DomTree::new(),
+            stylesheets: Vec::new(),
+            js_context: JsContext::new(),
+            alert_dialog: None,
             layout: DocumentLayout {
                 title: String::from("Mouros Browser"),
                 items: Vec::new(),
                 links: Vec::new(),
+                clickables: Vec::new(),
                 total_height: 100,
             },
             scroll_offset: 0,
@@ -73,34 +85,103 @@ impl BrowserApp {
         app
     }
 
-    pub fn load_welcome_page(&mut self) {
-        let welcome_html = concat!(
-            "<html><head><title>Welcome to Mouros Browser</title></head><body>",
-            "<h1>Welcome to Mouros Browser</h1>",
-            "<p>A native, pure <strong>#![no_std]</strong> web browser running on bare-metal x86_64 Rust.</p>",
-            "<hr>",
-            "<h2>Quick Navigation Links</h2>",
-            "<ul>",
-            "  <li><a href=\"https://abjdev.github.io/hw.html\">Live HTTPS Test (https://abjdev.github.io/hw.html)</a></li>",
-            "  <li><a href=\"http://example.com/\">Example Domain (http://example.com/)</a></li>",
-            "  <li><a href=\"http://10.0.2.2:8000/\">Local QEMU Host Server (http://10.0.2.2:8000/)</a></li>",
-            "</ul>",
-            "<h2>Built-in Capabilities</h2>",
-            "<ul>",
-            "  <li>Real RTL8139 PCI hardware controller with DMA ring buffers</li>",
-            "  <li>Full TCP/IP networking stack: Ethernet, ARP, IPv4, ICMP, UDP, TCP</li>",
-            "  <li>Automatic DHCP configuration and DNS resolution</li>",
-            "  <li>Native TLS 1.3 Client: X25519 ECDHE, ChaCha20-Poly1305 AEAD, HKDF-SHA256</li>",
-            "  <li>Full HTTPS and HTTP support with seamless redirect following</li>",
-            "  <li>Clickable links, backward/forward history, and smooth vertical scrolling</li>",
-            "</ul>",
-            "</body></html>"
-        );
-        let layout = layout_html(welcome_html, self.last_width.saturating_sub(40));
+    pub fn update_layout(&mut self) {
+        let styles = compute_styles(&self.dom_tree, &self.stylesheets);
+        let layout = compute_layout(&self.dom_tree, &styles, self.last_width.saturating_sub(40));
         self.page_title = format!("Mouros Browser - {}", layout.title);
         self.layout = layout;
+    }
+
+    pub fn load_html(&mut self, html_text: &str) {
+        let doc = parse_html(html_text);
+        self.dom_tree = doc.tree;
+        self.stylesheets = doc.stylesheets;
+        self.js_context = JsContext::new();
+
+        // Execute top-level scripts
+        for script in doc.scripts {
+            self.js_context.eval_script(&mut self.dom_tree, &script);
+        }
+
+        if let Some(first_alert) = self.js_context.alerts.last() {
+            self.alert_dialog = Some(first_alert.clone());
+        }
+
+        self.update_layout();
         self.scroll_offset = 0;
-        self.status_text = String::from("Done (Welcome Page)");
+    }
+
+    pub fn load_welcome_page(&mut self) {
+        let welcome_html = concat!(
+            "<html><head><title>Mouros Web Browser</title>",
+            "<style>",
+            "  body { background-color: #f0f4f8; color: #111; }",
+            "  .header { background-color: #004488; color: #ffffff; padding: 10px; margin-bottom: 8px; border: 1px solid #002244; }",
+            "  .card { background-color: #ffffff; padding: 8px; margin-bottom: 8px; border: 1px solid #cccccc; }",
+            "  .btn { padding: 4px; font-weight: bold; }",
+            "  .highlight { color: #cc0000; font-weight: bold; }",
+            "</style>",
+            "<script>",
+            "  var counter = 0;",
+            "  function incCount() {",
+            "    counter = counter + 1;",
+            "    document.getElementById('counter_val').innerText = 'Count: ' + counter;",
+            "  }",
+            "  function decCount() {",
+            "    counter = counter - 1;",
+            "    document.getElementById('counter_val').innerText = 'Count: ' + counter;",
+            "  }",
+            "  function toggleCardColor() {",
+            "    var c = document.getElementById('demo_card');",
+            "    if (c.style.backgroundColor == 'yellow') {",
+            "      c.style.backgroundColor = 'white';",
+            "    } else {",
+            "      c.style.backgroundColor = 'yellow';",
+            "    }",
+            "  }",
+            "  function triggerAlert() {",
+            "    alert('JavaScript execution verified on Mouros OS!');",
+            "  }",
+            "</script>",
+            "</head><body>",
+            "<div class=\"header\">",
+            "  <h1>Mouros Browser</h1>",
+            "  <p>Bare-metal x86_64 OS with native CSS Styling and JavaScript Engine!</p>",
+            "</div>",
+            "<div class=\"card\" id=\"demo_card\" style=\"background-color: white;\">",
+            "  <h2>Interactive DOM & JavaScript Showcase</h2>",
+            "  <p>Test reactive JavaScript state manipulation and CSS updates in real-time:</p>",
+            "  <p>",
+            "    <button onclick=\"decCount()\"> - </button> ",
+            "    <span id=\"counter_val\" style=\"color: blue; font-weight: bold;\">Count: 0</span> ",
+            "    <button onclick=\"incCount()\"> + </button>",
+            "  </p>",
+            "  <p>",
+            "    <button onclick=\"toggleCardColor()\">Toggle Card Color</button> ",
+            "    <button onclick=\"triggerAlert()\">Trigger Alert</button>",
+            "  </p>",
+            "</div>",
+            "<div class=\"card\">",
+            "  <h2>Built-in Capabilities</h2>",
+            "  <ul>",
+            "    <li>Native CSS Engine: stylesheets, classes, IDs, cascade, colors, boxes</li>",
+            "    <li>Native JavaScript Engine: variables, conditionals, loops, functions, DOM APIs</li>",
+            "    <li>Reactive Layout: DOM mutations dynamically recompute layout and paint</li>",
+            "    <li>Networking & Security: RTL8139 NIC, TCP/IP, DNS, DHCP, TLS 1.3 HTTPS</li>",
+            "  </ul>",
+            "</div>",
+            "<div class=\"card\">",
+            "  <h2>Quick Navigation Links</h2>",
+            "  <ul>",
+            "    <li><a href=\"https://abjdev.github.io/hw.html\">Live HTTPS Test (abjdev.github.io/hw.html)</a></li>",
+            "    <li><a href=\"http://example.com/\">Example Domain (example.com)</a></li>",
+            "    <li><a href=\"http://10.0.2.2:8000/\">Local Host Server (10.0.2.2:8000)</a></li>",
+            "  </ul>",
+            "</div>",
+            "</body></html>"
+        );
+        self.load_html(welcome_html);
+        self.status_text = String::from("Done (Welcome Page with CSS & JS)");
     }
 
     pub fn navigate_to(&mut self, url: &str, add_to_history: bool) {
@@ -363,9 +444,7 @@ impl BrowserApp {
             String::from(body)
         };
 
-        self.layout = layout_html(&decoded_body, self.last_width.saturating_sub(40));
-        self.page_title = format!("Mouros Browser - {}", self.layout.title);
-        self.scroll_offset = 0;
+        self.load_html(&decoded_body);
         let proto_tag = if is_https { "HTTPS TLS 1.3" } else { "HTTP" };
         self.status_text = format!("Done ({}, {}, {} bytes)", proto_tag, first_line, decoded_body.len());
     }
@@ -478,6 +557,24 @@ impl Application for BrowserApp {
         let w = self.last_width;
         let h = self.last_height;
 
+        if self.alert_dialog.is_some() {
+            let dlg_w = 320;
+            let dlg_h = 130;
+            let dlg_x = (w as isize - dlg_w as isize) / 2;
+            let dlg_y = (h as isize - dlg_h as isize) / 2;
+            let ok_w = 64;
+            let ok_h = 24;
+            let ok_x = dlg_x + (dlg_w as isize - ok_w as isize) / 2;
+            let ok_y = dlg_y + dlg_h as isize - 36;
+
+            if local_x >= ok_x && local_x < ok_x + ok_w as isize && local_y >= ok_y && local_y < ok_y + ok_h as isize {
+                self.alert_dialog = None;
+            } else {
+                self.alert_dialog = None;
+            }
+            return;
+        }
+
         // 1. Top toolbar click (y: 4..28)
         if local_y >= 4 && local_y <= 28 {
             // Back button: 4..28
@@ -526,30 +623,53 @@ impl Application for BrowserApp {
             let view_y = (local_y - view_top - 4) + self.scroll_offset as isize;
 
             if view_x >= 0 && view_y >= 0 {
-                // Check if user clicked a link
-                for link in &self.layout.links {
-                    let lx = link.x as isize;
-                    let ly = link.y as isize;
-                    let lw = link.width as isize;
-                    let lh = link.height as isize;
+                // Check if user clicked any interactive item in document
+                for clickable in &self.layout.clickables {
+                    let cx = clickable.x as isize;
+                    let cy = clickable.y as isize;
+                    let cw = clickable.width as isize;
+                    let ch = clickable.height as isize;
 
-                    if view_x >= lx.saturating_sub(4) && view_x < lx + lw + 4 && view_y >= ly.saturating_sub(2) && view_y < ly + lh + 4 {
-                        let mut target = link.href.clone();
-                        // Handle relative links
-                        if !target.starts_with("http://") && !target.starts_with("https://") {
-                            if target.starts_with('/') {
-                                // Find host prefix of current url
-                                if let Some(idx) = self.current_url.find("://") {
-                                    let rem = &self.current_url[idx + 3..];
-                                    let host = rem.split('/').next().unwrap_or("");
-                                    target = format!("http://{}{}", host, target);
+                    if view_x >= cx.saturating_sub(2) && view_x < cx + cw + 2 && view_y >= cy.saturating_sub(2) && view_y < cy + ch + 2 {
+                        match &clickable.action {
+                            ClickableAction::Navigate(target_url) => {
+                                let mut target = target_url.clone();
+                                // Handle relative links
+                                if !target.starts_with("http://") && !target.starts_with("https://") {
+                                    if target.starts_with('/') {
+                                        // Find host prefix of current url
+                                        if let Some(idx) = self.current_url.find("://") {
+                                            let rem = &self.current_url[idx + 3..];
+                                            let host = rem.split('/').next().unwrap_or("");
+                                            target = format!("http://{}{}", host, target);
+                                        }
+                                    } else {
+                                        target = format!("http://{}", target);
+                                    }
                                 }
-                            } else {
-                                target = format!("http://{}", target);
+                                self.pending_navigate = Some(target);
+                                return;
+                            }
+                            ClickableAction::JavaScript(code) => {
+                                self.js_context.eval_script(&mut self.dom_tree, code);
+                                if let Some(msg) = self.js_context.alerts.last() {
+                                    self.alert_dialog = Some(msg.clone());
+                                }
+                                self.update_layout();
+                                return;
+                            }
+                            ClickableAction::ButtonClick(node_id) => {
+                                let onclick = self.dom_tree.get_node(*node_id).and_then(|n| n.onclick.clone());
+                                if let Some(code) = onclick {
+                                    self.js_context.eval_script(&mut self.dom_tree, &code);
+                                    if let Some(msg) = self.js_context.alerts.last() {
+                                        self.alert_dialog = Some(msg.clone());
+                                    }
+                                    self.update_layout();
+                                }
+                                return;
                             }
                         }
-                        self.pending_navigate = Some(target);
-                        return;
                     }
                 }
             }
@@ -705,6 +825,36 @@ impl Application for BrowserApp {
                     let alt_disp = if alt.len() > 6 { &alt[..6] } else { alt };
                     fb.draw_string(draw_x + 4, draw_y + 16, alt_disp, Color::from_rgb(100, 100, 100));
                 }
+                LayoutItem::Box { x, y, width, height, background, border_color, border_width } => {
+                    if *y + height < self.scroll_offset || *y > self.scroll_offset + doc_viewport_h {
+                        continue;
+                    }
+                    let draw_y = content_top + 4 + (*y as isize - self.scroll_offset as isize);
+                    let draw_x = client_x + 8 + *x as isize;
+                    if let Some(bg) = background {
+                        fb.fill_rect(draw_x, draw_y, *width, *height, *bg);
+                    }
+                    if *border_width > 0 {
+                        let bc = border_color.unwrap_or(Color::from_rgb(180, 180, 180));
+                        fb.draw_rect(draw_x, draw_y, *width, *height, bc);
+                    }
+                }
+                LayoutItem::Button { x, y, width, height, text, bg_color, text_color, .. } => {
+                    if *y + height < self.scroll_offset || *y > self.scroll_offset + doc_viewport_h {
+                        continue;
+                    }
+                    let draw_y = content_top + 4 + (*y as isize - self.scroll_offset as isize);
+                    let draw_x = client_x + 8 + *x as isize;
+                    if let Some(bg) = bg_color {
+                        fb.fill_rect(draw_x, draw_y, *width, *height, *bg);
+                        fb.draw_rect(draw_x, draw_y, *width, *height, Color::from_rgb(120, 120, 120));
+                    } else {
+                        fb.draw_button(draw_x, draw_y, *width, *height, false);
+                    }
+                    let tx = draw_x + (width.saturating_sub(text.len() * FONT_WIDTH)) as isize / 2;
+                    let ty = draw_y + (height.saturating_sub(FONT_HEIGHT)) as isize / 2;
+                    fb.draw_string(tx, ty, text, *text_color);
+                }
             }
         }
 
@@ -728,5 +878,32 @@ impl Application for BrowserApp {
         let status_y = client_y + client_h as isize - status_h as isize;
         fb.draw_sunken_panel(client_x + 4, status_y, client_w.saturating_sub(8), 20);
         fb.draw_string(client_x + 8, status_y + 2, &self.status_text, Color::BLACK);
+
+        // 5. JavaScript Alert Modal Dialog
+        if let Some(ref alert_msg) = self.alert_dialog {
+            let dlg_w = 320;
+            let dlg_h = 130;
+            let dlg_x = client_x + (client_w as isize - dlg_w as isize) / 2;
+            let dlg_y = client_y + (client_h as isize - dlg_h as isize) / 2;
+
+            // Shadow & window background
+            fb.fill_rect(dlg_x + 4, dlg_y + 4, dlg_w, dlg_h, Color::from_rgb(60, 60, 60));
+            fb.draw_raised_panel(dlg_x, dlg_y, dlg_w, dlg_h);
+
+            // Title bar
+            fb.fill_rect(dlg_x + 3, dlg_y + 3, dlg_w - 6, 20, Color::from_rgb(0, 0, 128));
+            fb.draw_string(dlg_x + 8, dlg_y + 5, "JavaScript Alert", Color::WHITE);
+
+            // Alert icon / message
+            fb.draw_string(dlg_x + 16, dlg_y + 40, alert_msg, Color::BLACK);
+
+            // OK button
+            let ok_w = 64;
+            let ok_h = 24;
+            let ok_x = dlg_x + (dlg_w as isize - ok_w as isize) / 2;
+            let ok_y = dlg_y + dlg_h as isize - 36;
+            fb.draw_button(ok_x, ok_y, ok_w, ok_h, false);
+            fb.draw_string(ok_x + 22, ok_y + 4, "OK", Color::BLACK);
+        }
     }
 }
